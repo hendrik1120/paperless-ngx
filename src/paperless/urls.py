@@ -221,6 +221,7 @@ urlpatterns = [
     ),
     # login, logout
     path("accounts/", include("allauth.urls")),
+    path("_allauth/", include("allauth.headless.urls")),
     # Root of the Frontend
     re_path(
         r".*",

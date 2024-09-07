@@ -318,6 +318,7 @@ INSTALLED_APPS = [
     "allauth",
     "allauth.account",
     "allauth.socialaccount",
+    "allauth.headless",
     *env_apps,
 ]
 
@@ -459,6 +460,7 @@ SOCIALACCOUNT_AUTO_SIGNUP = __get_boolean("PAPERLESS_SOCIAL_AUTO_SIGNUP")
 SOCIALACCOUNT_PROVIDERS = json.loads(
     os.getenv("PAPERLESS_SOCIALACCOUNT_PROVIDERS", "{}"),
 )
+ADLESS_TOKEN_STRATEGY = "paperless.strategies.DrfTokenStrategy"
 
 ACCOUNT_EMAIL_SUBJECT_PREFIX = "[Paperless-ngx] "
 
