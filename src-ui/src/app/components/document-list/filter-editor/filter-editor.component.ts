@@ -12,7 +12,7 @@ import {
 import { Tag } from 'src/app/data/tag'
 import { Correspondent } from 'src/app/data/correspondent'
 import { DocumentType } from 'src/app/data/document-type'
-import { Observable, Subject, Subscription, from } from 'rxjs'
+import { Observable, Subject, from } from 'rxjs'
 import {
   catchError,
   debounceTime,
@@ -62,7 +62,7 @@ import {
   FILTER_HAS_CUSTOM_FIELDS_ANY,
   FILTER_HAS_CUSTOM_FIELDS_ALL,
   FILTER_HAS_ANY_CUSTOM_FIELDS,
-  FILTER_DOES_NOT_HAVE_CUSTOM_FIELDS,
+  FILTER_CUSTOM_FIELDS_QUERY,
 } from 'src/app/data/filter-rule-type'
 import {
   FilterableDropdownSelectionModel,
@@ -92,6 +92,16 @@ import { ComponentWithPermissions } from '../../with-permissions/with-permission
 import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
 import { CustomField } from 'src/app/data/custom-field'
 import { SearchService } from 'src/app/services/rest/search.service'
+import {
+  CustomFieldQueryLogicalOperator,
+  CustomFieldQueryOperator,
+} from 'src/app/data/custom-field-query'
+import { CustomFieldQueriesModel } from '../../common/custom-fields-query-dropdown/custom-fields-query-dropdown.component'
+import {
+  CustomFieldQueryExpression,
+  CustomFieldQueryAtom,
+} from 'src/app/utils/custom-field-query-element'
+import { LoadingComponentWithPermissions } from '../../loading-component/loading.component'
 
 const TEXT_FILTER_TARGET_TITLE = 'title'
 const TEXT_FILTER_TARGET_TITLE_CONTENT = 'title-content'
@@ -178,7 +188,7 @@ const DEFAULT_TEXT_FILTER_MODIFIER_OPTIONS = [
   styleUrls: ['./filter-editor.component.scss'],
 })
 export class FilterEditorComponent
-  extends ComponentWithPermissions
+  extends LoadingComponentWithPermissions
   implements OnInit, OnDestroy, AfterViewInit
 {
   generateFilterName() {
@@ -188,9 +198,9 @@ export class FilterEditorComponent
         case FILTER_CORRESPONDENT:
         case FILTER_HAS_CORRESPONDENT_ANY:
           if (rule.value) {
-            return $localize`Correspondent: ${this.correspondents.find(
-              (c) => c.id == +rule.value
-            )?.name}`
+            return $localize`Correspondent: ${
+              this.correspondents.find((c) => c.id == +rule.value)?.name
+            }`
           } else {
             return $localize`Without correspondent`
           }
@@ -198,9 +208,9 @@ export class FilterEditorComponent
         case FILTER_DOCUMENT_TYPE:
         case FILTER_HAS_DOCUMENT_TYPE_ANY:
           if (rule.value) {
-            return $localize`Document type: ${this.documentTypes.find(
-              (dt) => dt.id == +rule.value
-            )?.name}`
+            return $localize`Document type: ${
+              this.documentTypes.find((dt) => dt.id == +rule.value)?.name
+            }`
           } else {
             return $localize`Without document type`
           }
@@ -208,31 +218,25 @@ export class FilterEditorComponent
         case FILTER_STORAGE_PATH:
         case FILTER_HAS_STORAGE_PATH_ANY:
           if (rule.value) {
-            return $localize`Storage path: ${this.storagePaths.find(
-              (sp) => sp.id == +rule.value
-            )?.name}`
+            return $localize`Storage path: ${
+              this.storagePaths.find((sp) => sp.id == +rule.value)?.name
+            }`
           } else {
             return $localize`Without storage path`
           }
 
         case FILTER_HAS_TAGS_ALL:
-          return $localize`Tag: ${this.tags.find((t) => t.id == +rule.value)
-            ?.name}`
+          return $localize`Tag: ${
+            this.tags.find((t) => t.id == +rule.value)?.name
+          }`
 
         case FILTER_HAS_ANY_TAG:
           if (rule.value == 'false') {
             return $localize`Without any tag`
           }
 
-        case FILTER_HAS_CUSTOM_FIELDS_ALL:
-          return $localize`Custom fields: ${this.customFields.find(
-            (f) => f.id == +rule.value
-          )?.name}`
-
-        case FILTER_HAS_ANY_CUSTOM_FIELDS:
-          if (rule.value == 'false') {
-            return $localize`Without any custom field`
-          }
+        case FILTER_CUSTOM_FIELDS_QUERY:
+          return $localize`Custom fields query`
 
         case FILTER_TITLE:
           return $localize`Title: ${rule.value}`
@@ -286,8 +290,6 @@ export class FilterEditorComponent
   _moreLikeId: number
   _moreLikeDoc: Document
 
-  unsubscribeNotifier: Subject<any> = new Subject()
-
   get textFilterTargets() {
     if (this.textFilterTarget == TEXT_FILTER_TARGET_FULLTEXT_MORELIKE) {
       return DEFAULT_TEXT_FILTER_TARGET_OPTIONS.concat([
@@ -320,7 +322,7 @@ export class FilterEditorComponent
   correspondentSelectionModel = new FilterableDropdownSelectionModel()
   documentTypeSelectionModel = new FilterableDropdownSelectionModel()
   storagePathSelectionModel = new FilterableDropdownSelectionModel()
-  customFieldSelectionModel = new FilterableDropdownSelectionModel()
+  customFieldQueriesModel = new CustomFieldQueriesModel()
 
   dateCreatedBefore: string
   dateCreatedAfter: string
@@ -355,7 +357,7 @@ export class FilterEditorComponent
     this.storagePathSelectionModel.clear(false)
     this.tagSelectionModel.clear(false)
     this.correspondentSelectionModel.clear(false)
-    this.customFieldSelectionModel.clear(false)
+    this.customFieldQueriesModel.clear(false)
     this._textFilter = null
     this._moreLikeId = null
     this.dateAddedBefore = null
@@ -522,34 +524,45 @@ export class FilterEditorComponent
             false
           )
           break
+        case FILTER_CUSTOM_FIELDS_QUERY:
+          try {
+            const query = JSON.parse(rule.value)
+            if (Array.isArray(query)) {
+              if (query.length === 2) {
+                // expression
+                this.customFieldQueriesModel.addExpression(
+                  new CustomFieldQueryExpression(query as any)
+                )
+              } else if (query.length === 3) {
+                // atom
+                this.customFieldQueriesModel.addAtom(
+                  new CustomFieldQueryAtom(query as any)
+                )
+              }
+            }
+          } catch (e) {
+            // error handled by list view service
+          }
+          break
+        // Legacy custom field filters
         case FILTER_HAS_CUSTOM_FIELDS_ALL:
-          this.customFieldSelectionModel.logicalOperator = LogicalOperator.And
-          this.customFieldSelectionModel.set(
-            rule.value ? +rule.value : null,
-            ToggleableItemState.Selected,
-            false
+          this.customFieldQueriesModel.addExpression(
+            new CustomFieldQueryExpression([
+              CustomFieldQueryLogicalOperator.And,
+              rule.value
+                .split(',')
+                .map((id) => [id, CustomFieldQueryOperator.Exists, 'true']),
+            ])
           )
           break
         case FILTER_HAS_CUSTOM_FIELDS_ANY:
-          this.customFieldSelectionModel.logicalOperator = LogicalOperator.Or
-          this.customFieldSelectionModel.set(
-            rule.value ? +rule.value : null,
-            ToggleableItemState.Selected,
-            false
-          )
-          break
-        case FILTER_HAS_ANY_CUSTOM_FIELDS:
-          this.customFieldSelectionModel.set(
-            null,
-            ToggleableItemState.Selected,
-            false
-          )
-          break
-        case FILTER_DOES_NOT_HAVE_CUSTOM_FIELDS:
-          this.customFieldSelectionModel.set(
-            rule.value ? +rule.value : null,
-            ToggleableItemState.Excluded,
-            false
+          this.customFieldQueriesModel.addExpression(
+            new CustomFieldQueryExpression([
+              CustomFieldQueryLogicalOperator.Or,
+              rule.value
+                .split(',')
+                .map((id) => [id, CustomFieldQueryOperator.Exists, 'true']),
+            ])
           )
           break
         case FILTER_ASN_ISNULL:
@@ -767,34 +780,14 @@ export class FilterEditorComponent
           })
         })
     }
-    if (this.customFieldSelectionModel.isNoneSelected()) {
+    let queries = this.customFieldQueriesModel.queries.map((query) =>
+      query.serialize()
+    )
+    if (queries.length > 0) {
       filterRules.push({
-        rule_type: FILTER_HAS_ANY_CUSTOM_FIELDS,
-        value: 'false',
+        rule_type: FILTER_CUSTOM_FIELDS_QUERY,
+        value: JSON.stringify(queries[0]),
       })
-    } else {
-      const customFieldFilterType =
-        this.customFieldSelectionModel.logicalOperator == LogicalOperator.And
-          ? FILTER_HAS_CUSTOM_FIELDS_ALL
-          : FILTER_HAS_CUSTOM_FIELDS_ANY
-      this.customFieldSelectionModel
-        .getSelectedItems()
-        .filter((field) => field.id)
-        .forEach((field) => {
-          filterRules.push({
-            rule_type: customFieldFilterType,
-            value: field.id?.toString(),
-          })
-        })
-      this.customFieldSelectionModel
-        .getExcludedItems()
-        .filter((field) => field.id)
-        .forEach((field) => {
-          filterRules.push({
-            rule_type: FILTER_DOES_NOT_HAVE_CUSTOM_FIELDS,
-            value: field.id?.toString(),
-          })
-        })
     }
     if (this.dateCreatedBefore) {
       filterRules.push({
@@ -961,16 +954,30 @@ export class FilterEditorComponent
   @Input()
   public disabled: boolean = false
 
+  private loadingCountTotal: number = 0
+  private loadingCount: number = 0
+
+  private maybeCompleteLoading() {
+    this.loadingCount++
+    if (this.loadingCount == this.loadingCountTotal) {
+      this.loading = false
+      this.reveal = true
+    }
+  }
+
   ngOnInit() {
+    this.loading = true
     if (
       this.permissionsService.currentUserCan(
         PermissionAction.View,
         PermissionType.Tag
       )
     ) {
-      this.tagService
-        .listAll()
-        .subscribe((result) => (this.tags = result.results))
+      this.loadingCountTotal++
+      this.tagService.listAll().subscribe((result) => {
+        this.tags = result.results
+        this.maybeCompleteLoading()
+      })
     }
     if (
       this.permissionsService.currentUserCan(
@@ -978,9 +985,11 @@ export class FilterEditorComponent
         PermissionType.Correspondent
       )
     ) {
-      this.correspondentService
-        .listAll()
-        .subscribe((result) => (this.correspondents = result.results))
+      this.loadingCountTotal++
+      this.correspondentService.listAll().subscribe((result) => {
+        this.correspondents = result.results
+        this.maybeCompleteLoading()
+      })
     }
     if (
       this.permissionsService.currentUserCan(
@@ -988,9 +997,11 @@ export class FilterEditorComponent
         PermissionType.DocumentType
       )
     ) {
-      this.documentTypeService
-        .listAll()
-        .subscribe((result) => (this.documentTypes = result.results))
+      this.loadingCountTotal++
+      this.documentTypeService.listAll().subscribe((result) => {
+        this.documentTypes = result.results
+        this.maybeCompleteLoading()
+      })
     }
     if (
       this.permissionsService.currentUserCan(
@@ -998,9 +1009,11 @@ export class FilterEditorComponent
         PermissionType.StoragePath
       )
     ) {
-      this.storagePathService
-        .listAll()
-        .subscribe((result) => (this.storagePaths = result.results))
+      this.loadingCountTotal++
+      this.storagePathService.listAll().subscribe((result) => {
+        this.storagePaths = result.results
+        this.maybeCompleteLoading()
+      })
     }
     if (
       this.permissionsService.currentUserCan(
@@ -1008,9 +1021,11 @@ export class FilterEditorComponent
         PermissionType.CustomField
       )
     ) {
-      this.customFieldService
-        .listAll()
-        .subscribe((result) => (this.customFields = result.results))
+      this.loadingCountTotal++
+      this.customFieldService.listAll().subscribe((result) => {
+        this.customFields = result.results
+        this.maybeCompleteLoading()
+      })
     }
 
     this.textFilterDebounce = new Subject<string>()
@@ -1076,10 +1091,6 @@ export class FilterEditorComponent
 
   onStoragePathDropdownOpen() {
     this.storagePathSelectionModel.apply()
-  }
-
-  onCustomFieldsDropdownOpen() {
-    this.customFieldSelectionModel.apply()
   }
 
   updateTextFilter(text, updateRules = true) {
