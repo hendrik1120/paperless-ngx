@@ -1,14 +1,16 @@
+from __future__ import annotations
+
 import logging
 import math
-import os
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime
 from datetime import timezone
 from shutil import rmtree
+from typing import TYPE_CHECKING
+from typing import Literal
 
 from django.conf import settings
-from django.db.models import QuerySet
 from django.utils import timezone as django_timezone
 from guardian.shortcuts import get_users_with_perms
 from whoosh import classify
@@ -32,10 +34,7 @@ from whoosh.qparser import QueryParser
 from whoosh.qparser.dateparse import DateParserPlugin
 from whoosh.qparser.dateparse import English
 from whoosh.qparser.plugins import FieldsPlugin
-from whoosh.reading import IndexReader
 from whoosh.scoring import TF_IDF
-from whoosh.searching import ResultsPage
-from whoosh.searching import Searcher
 from whoosh.util.times import timespan
 from whoosh.writing import AsyncWriter
 
@@ -44,10 +43,16 @@ from documents.models import Document
 from documents.models import Note
 from documents.models import User
 
+if TYPE_CHECKING:
+    from django.db.models import QuerySet
+    from whoosh.reading import IndexReader
+    from whoosh.searching import ResultsPage
+    from whoosh.searching import Searcher
+
 logger = logging.getLogger("paperless.index")
 
 
-def get_schema():
+def get_schema() -> Schema:
     return Schema(
         id=NUMERIC(stored=True, unique=True),
         title=TEXT(sortable=True),
@@ -85,7 +90,7 @@ def get_schema():
     )
 
 
-def open_index(recreate=False) -> FileIndex:
+def open_index(*, recreate=False) -> FileIndex:
     try:
         if exists_in(settings.INDEX_DIR) and not recreate:
             return open_dir(settings.INDEX_DIR, schema=get_schema())
@@ -93,7 +98,7 @@ def open_index(recreate=False) -> FileIndex:
         logger.exception("Error while opening the index, recreating.")
 
     # create_in doesn't handle corrupted indexes very well, remove the directory entirely first
-    if os.path.isdir(settings.INDEX_DIR):
+    if settings.INDEX_DIR.is_dir():
         rmtree(settings.INDEX_DIR)
     settings.INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +106,7 @@ def open_index(recreate=False) -> FileIndex:
 
 
 @contextmanager
-def open_index_writer(optimize=False) -> AsyncWriter:
+def open_index_writer(*, optimize=False) -> AsyncWriter:
     writer = AsyncWriter(open_index())
 
     try:
@@ -123,7 +128,7 @@ def open_index_searcher() -> Searcher:
         searcher.close()
 
 
-def update_document(writer: AsyncWriter, doc: Document):
+def update_document(writer: AsyncWriter, doc: Document) -> None:
     tags = ",".join([t.name for t in doc.tags.all()])
     tags_ids = ",".join([str(t.id) for t in doc.tags.all()])
     notes = ",".join([str(c.note) for c in Note.objects.filter(document=doc)])
@@ -133,7 +138,7 @@ def update_document(writer: AsyncWriter, doc: Document):
     custom_fields_ids = ",".join(
         [str(f.field.id) for f in CustomFieldInstance.objects.filter(document=doc)],
     )
-    asn = doc.archive_serial_number
+    asn: int | None = doc.archive_serial_number
     if asn is not None and (
         asn < Document.ARCHIVE_SERIAL_NUMBER_MIN
         or asn > Document.ARCHIVE_SERIAL_NUMBER_MAX
@@ -149,7 +154,7 @@ def update_document(writer: AsyncWriter, doc: Document):
         doc,
         only_with_perms_in=["view_document"],
     )
-    viewer_ids = ",".join([str(u.id) for u in users_with_perms])
+    viewer_ids: str = ",".join([str(u.id) for u in users_with_perms])
     writer.update_document(
         id=doc.pk,
         title=doc.title,
@@ -187,20 +192,20 @@ def update_document(writer: AsyncWriter, doc: Document):
     )
 
 
-def remove_document(writer: AsyncWriter, doc: Document):
+def remove_document(writer: AsyncWriter, doc: Document) -> None:
     remove_document_by_id(writer, doc.pk)
 
 
-def remove_document_by_id(writer: AsyncWriter, doc_id):
+def remove_document_by_id(writer: AsyncWriter, doc_id) -> None:
     writer.delete_by_term("id", doc_id)
 
 
-def add_or_update_document(document: Document):
+def add_or_update_document(document: Document) -> None:
     with open_index_writer() as writer:
         update_document(writer, document)
 
 
-def remove_document_from_index(document: Document):
+def remove_document_from_index(document: Document) -> None:
     with open_index_writer() as writer:
         remove_document(writer, document)
 
@@ -218,11 +223,11 @@ class MappedDocIdSet(DocIdSet):
         self.document_ids = BitSet(document_ids, size=max_id)
         self.ixreader = ixreader
 
-    def __contains__(self, docnum):
+    def __contains__(self, docnum) -> bool:
         document_id = self.ixreader.stored_fields(docnum)["id"]
         return document_id in self.document_ids
 
-    def __bool__(self):
+    def __bool__(self) -> Literal[True]:
         # searcher.search ignores a filter if it's "falsy".
         # We use this hack so this DocIdSet, when used as a filter, is never ignored.
         return True
@@ -232,13 +237,13 @@ class DelayedQuery:
     def _get_query(self):
         raise NotImplementedError  # pragma: no cover
 
-    def _get_query_sortedby(self):
+    def _get_query_sortedby(self) -> tuple[None, Literal[False]] | tuple[str, bool]:
         if "ordering" not in self.query_params:
             return None, False
 
         field: str = self.query_params["ordering"]
 
-        sort_fields_map = {
+        sort_fields_map: dict[str, str] = {
             "created": "created",
             "modified": "modified",
             "added": "added",
@@ -268,7 +273,7 @@ class DelayedQuery:
         query_params,
         page_size,
         filter_queryset: QuerySet,
-    ):
+    ) -> None:
         self.searcher = searcher
         self.query_params = query_params
         self.page_size = page_size
@@ -276,7 +281,7 @@ class DelayedQuery:
         self.first_score = None
         self.filter_queryset = filter_queryset
 
-    def __len__(self):
+    def __len__(self) -> int:
         page = self[0:1]
         return len(page)
 
@@ -334,7 +339,7 @@ class LocalDateParser(English):
 
 
 class DelayedFullTextQuery(DelayedQuery):
-    def _get_query(self):
+    def _get_query(self) -> tuple:
         q_str = self.query_params["query"]
         qp = MultifieldParser(
             [
@@ -364,7 +369,7 @@ class DelayedFullTextQuery(DelayedQuery):
 
 
 class DelayedMoreLikeThisQuery(DelayedQuery):
-    def _get_query(self):
+    def _get_query(self) -> tuple:
         more_like_doc_id = int(self.query_params["more_like_id"])
         content = Document.objects.get(id=more_like_doc_id).content
 
@@ -379,7 +384,7 @@ class DelayedMoreLikeThisQuery(DelayedQuery):
         q = query.Or(
             [query.Term("content", word, boost=weight) for word, weight in kts],
         )
-        mask = {docnum}
+        mask: set = {docnum}
 
         return q, mask
 
@@ -389,7 +394,7 @@ def autocomplete(
     term: str,
     limit: int = 10,
     user: User | None = None,
-):
+) -> list:
     """
     Mimics whoosh.reading.IndexReader.most_distinctive_terms with permissions
     and without scoring
@@ -402,7 +407,7 @@ def autocomplete(
         # content field query instead and return bogus, not text data
         qp.remove_plugin_class(FieldsPlugin)
         q = qp.parse(f"{term.lower()}*")
-        user_criterias = get_permissions_criterias(user)
+        user_criterias: list = get_permissions_criterias(user)
 
         results = s.search(
             q,
@@ -417,15 +422,15 @@ def autocomplete(
                     termCounts[match] += 1
             terms = [t for t, _ in termCounts.most_common(limit)]
 
-        term_encoded = term.encode("UTF-8")
+        term_encoded: bytes = term.encode("UTF-8")
         if term_encoded in terms:
             terms.insert(0, terms.pop(terms.index(term_encoded)))
 
     return terms
 
 
-def get_permissions_criterias(user: User | None = None):
-    user_criterias = [query.Term("has_owner", False)]
+def get_permissions_criterias(user: User | None = None) -> list:
+    user_criterias = [query.Term("has_owner", text=False)]
     if user is not None:
         if user.is_superuser:  # superusers see all docs
             user_criterias = []

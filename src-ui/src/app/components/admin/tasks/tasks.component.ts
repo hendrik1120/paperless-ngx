@@ -1,6 +1,16 @@
-import { Component, OnInit, OnDestroy } from '@angular/core'
+import { NgTemplateOutlet, SlicePipe } from '@angular/common'
+import { Component, OnDestroy, OnInit } from '@angular/core'
+import { FormsModule, ReactiveFormsModule } from '@angular/forms'
 import { Router } from '@angular/router'
-import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import {
+  NgbCollapseModule,
+  NgbDropdownModule,
+  NgbModal,
+  NgbNavModule,
+  NgbPaginationModule,
+  NgbPopoverModule,
+} from '@ng-bootstrap/ng-bootstrap'
+import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import {
   debounceTime,
   distinctUntilChanged,
@@ -8,10 +18,14 @@ import {
   first,
   Subject,
   takeUntil,
+  timer,
 } from 'rxjs'
 import { PaperlessTask } from 'src/app/data/paperless-task'
+import { IfPermissionsDirective } from 'src/app/directives/if-permissions.directive'
+import { CustomDatePipe } from 'src/app/pipes/custom-date.pipe'
 import { TasksService } from 'src/app/services/tasks.service'
 import { ConfirmDialogComponent } from '../../common/confirm-dialog/confirm-dialog.component'
+import { PageHeaderComponent } from '../../common/page-header/page-header.component'
 import { LoadingComponentWithPermissions } from '../../loading-component/loading.component'
 
 export enum TaskTab {
@@ -35,6 +49,21 @@ const FILTER_TARGETS = [
   selector: 'pngx-tasks',
   templateUrl: './tasks.component.html',
   styleUrls: ['./tasks.component.scss'],
+  imports: [
+    PageHeaderComponent,
+    IfPermissionsDirective,
+    CustomDatePipe,
+    SlicePipe,
+    FormsModule,
+    ReactiveFormsModule,
+    NgTemplateOutlet,
+    NgbCollapseModule,
+    NgbDropdownModule,
+    NgbNavModule,
+    NgbPaginationModule,
+    NgbPopoverModule,
+    NgxBootstrapIconsModule,
+  ],
 })
 export class TasksComponent
   extends LoadingComponentWithPermissions
@@ -48,7 +77,7 @@ export class TasksComponent
   public pageSize: number = 25
   public page: number = 1
 
-  public autoRefreshInterval: any
+  public autoRefreshEnabled: boolean = true
 
   private _filterText: string = ''
   get filterText() {
@@ -86,7 +115,14 @@ export class TasksComponent
 
   ngOnInit() {
     this.tasksService.reload()
-    this.toggleAutoRefresh()
+    timer(5000, 5000)
+      .pipe(
+        filter(() => this.autoRefreshEnabled),
+        takeUntil(this.unsubscribeNotifier)
+      )
+      .subscribe(() => {
+        this.tasksService.reload()
+      })
 
     this.filterDebounce
       .pipe(
@@ -101,7 +137,6 @@ export class TasksComponent
   ngOnDestroy() {
     super.ngOnDestroy()
     this.tasksService.cancelPending()
-    clearInterval(this.autoRefreshInterval)
   }
 
   dismissTask(task: PaperlessTask) {
@@ -209,17 +244,6 @@ export class TasksComponent
         return $localize`completed`
       case TaskTab.Failed:
         return $localize`failed`
-    }
-  }
-
-  toggleAutoRefresh(): void {
-    if (this.autoRefreshInterval) {
-      clearInterval(this.autoRefreshInterval)
-      this.autoRefreshInterval = null
-    } else {
-      this.autoRefreshInterval = setInterval(() => {
-        this.tasksService.reload()
-      }, 5000)
     }
   }
 

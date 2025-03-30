@@ -1,19 +1,36 @@
 import { Component, OnDestroy } from '@angular/core'
-import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import { FormsModule, ReactiveFormsModule } from '@angular/forms'
+import { Router } from '@angular/router'
+import {
+  NgbDropdownModule,
+  NgbModal,
+  NgbPaginationModule,
+} from '@ng-bootstrap/ng-bootstrap'
+import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
+import { delay, takeUntil, tap } from 'rxjs'
 import { Document } from 'src/app/data/document'
+import { SETTINGS_KEYS } from 'src/app/data/ui-settings'
+import { SettingsService } from 'src/app/services/settings.service'
 import { ToastService } from 'src/app/services/toast.service'
 import { TrashService } from 'src/app/services/trash.service'
 import { ConfirmDialogComponent } from '../../common/confirm-dialog/confirm-dialog.component'
-import { delay, takeUntil, tap } from 'rxjs'
-import { SettingsService } from 'src/app/services/settings.service'
-import { SETTINGS_KEYS } from 'src/app/data/ui-settings'
-import { Router } from '@angular/router'
+import { PageHeaderComponent } from '../../common/page-header/page-header.component'
+import { PreviewPopupComponent } from '../../common/preview-popup/preview-popup.component'
 import { LoadingComponentWithPermissions } from '../../loading-component/loading.component'
 
 @Component({
   selector: 'pngx-trash',
   templateUrl: './trash.component.html',
   styleUrl: './trash.component.scss',
+  imports: [
+    PageHeaderComponent,
+    PreviewPopupComponent,
+    FormsModule,
+    ReactiveFormsModule,
+    NgbDropdownModule,
+    NgbPaginationModule,
+    NgxBootstrapIconsModule,
+  ],
 })
 export class TrashComponent
   extends LoadingComponentWithPermissions
@@ -50,7 +67,7 @@ export class TrashComponent
         delay(100)
       )
       .subscribe(() => {
-        this.reveal = true
+        this.show = true
       })
   }
 
@@ -69,12 +86,17 @@ export class TrashComponent
         modal.componentInstance.buttonsEnabled = false
         this.trashService.emptyTrash([document.id]).subscribe({
           next: () => {
-            this.toastService.showInfo($localize`Document deleted`)
+            this.toastService.showInfo(
+              $localize`Document "${document.title}" deleted`
+            )
             modal.close()
             this.reload()
           },
           error: (err) => {
-            this.toastService.showError($localize`Error deleting document`, err)
+            this.toastService.showError(
+              $localize`Error deleting document "${document.title}"`,
+              err
+            )
             modal.close()
           },
         })
@@ -119,7 +141,7 @@ export class TrashComponent
     this.trashService.restoreDocuments([document.id]).subscribe({
       next: () => {
         this.toastService.show({
-          content: $localize`Document restored`,
+          content: $localize`Document "${document.title}" restored`,
           delay: 5000,
           actionName: $localize`Open document`,
           action: () => {
@@ -129,7 +151,10 @@ export class TrashComponent
         this.reload()
       },
       error: (err) => {
-        this.toastService.showError($localize`Error restoring document`, err)
+        this.toastService.showError(
+          $localize`Error restoring document "${document.title}"`,
+          err
+        )
       },
     })
   }

@@ -1,4 +1,6 @@
+import { DragDropModule } from '@angular/cdk/drag-drop'
 import { DatePipe } from '@angular/common'
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 import { provideHttpClientTesting } from '@angular/common/http/testing'
 import {
   ComponentFixture,
@@ -6,16 +8,23 @@ import {
   fakeAsync,
   tick,
 } from '@angular/core/testing'
+import { By } from '@angular/platform-browser'
 import { Router } from '@angular/router'
 import { RouterTestingModule } from '@angular/router/testing'
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap'
-import { of, Subject } from 'rxjs'
+import { NgxBootstrapIconsModule, allIcons } from 'ngx-bootstrap-icons'
+import { Subject, of } from 'rxjs'
 import { routes } from 'src/app/app-routing.module'
+import { CustomFieldDisplayComponent } from 'src/app/components/common/custom-field-display/custom-field-display.component'
+import { PreviewPopupComponent } from 'src/app/components/common/preview-popup/preview-popup.component'
+import { CustomFieldDataType } from 'src/app/data/custom-field'
+import { DisplayField, DisplayMode } from 'src/app/data/document'
 import {
   FILTER_CORRESPONDENT,
   FILTER_DOCUMENT_TYPE,
   FILTER_FULLTEXT_MORELIKE,
   FILTER_HAS_TAGS_ALL,
+  FILTER_OWNER_ANY,
   FILTER_STORAGE_PATH,
 } from 'src/app/data/filter-rule-type'
 import { SavedView } from 'src/app/data/saved-view'
@@ -23,25 +32,17 @@ import { IfPermissionsDirective } from 'src/app/directives/if-permissions.direct
 import { PermissionsGuard } from 'src/app/guards/permissions.guard'
 import { CustomDatePipe } from 'src/app/pipes/custom-date.pipe'
 import { DocumentTitlePipe } from 'src/app/pipes/document-title.pipe'
-import {
-  ConsumerStatusService,
-  FileStatus,
-} from 'src/app/services/consumer-status.service'
+import { SafeUrlPipe } from 'src/app/pipes/safeurl.pipe'
 import { DocumentListViewService } from 'src/app/services/document-list-view.service'
 import { PermissionsService } from 'src/app/services/permissions.service'
+import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
 import { DocumentService } from 'src/app/services/rest/document.service'
+import {
+  FileStatus,
+  WebsocketStatusService,
+} from 'src/app/services/websocket-status.service'
 import { WidgetFrameComponent } from '../widget-frame/widget-frame.component'
 import { SavedViewWidgetComponent } from './saved-view-widget.component'
-import { By } from '@angular/platform-browser'
-import { SafeUrlPipe } from 'src/app/pipes/safeurl.pipe'
-import { DragDropModule } from '@angular/cdk/drag-drop'
-import { PreviewPopupComponent } from 'src/app/components/common/preview-popup/preview-popup.component'
-import { NgxBootstrapIconsModule, allIcons } from 'ngx-bootstrap-icons'
-import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
-import { CustomFieldDataType } from 'src/app/data/custom-field'
-import { CustomFieldDisplayComponent } from 'src/app/components/common/custom-field-display/custom-field-display.component'
-import { DisplayMode, DisplayField } from 'src/app/data/document'
-import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 const savedView: SavedView = {
   id: 1,
@@ -111,13 +112,17 @@ describe('SavedViewWidgetComponent', () => {
   let component: SavedViewWidgetComponent
   let fixture: ComponentFixture<SavedViewWidgetComponent>
   let documentService: DocumentService
-  let consumerStatusService: ConsumerStatusService
+  let websocketStatusService: WebsocketStatusService
   let documentListViewService: DocumentListViewService
   let router: Router
 
   beforeEach(async () => {
     TestBed.configureTestingModule({
-      declarations: [
+      imports: [
+        NgbModule,
+        RouterTestingModule.withRoutes(routes),
+        DragDropModule,
+        NgxBootstrapIconsModule.pick(allIcons),
         SavedViewWidgetComponent,
         WidgetFrameComponent,
         IfPermissionsDirective,
@@ -126,12 +131,6 @@ describe('SavedViewWidgetComponent', () => {
         SafeUrlPipe,
         PreviewPopupComponent,
         CustomFieldDisplayComponent,
-      ],
-      imports: [
-        NgbModule,
-        RouterTestingModule.withRoutes(routes),
-        DragDropModule,
-        NgxBootstrapIconsModule.pick(allIcons),
       ],
       providers: [
         PermissionsGuard,
@@ -177,7 +176,7 @@ describe('SavedViewWidgetComponent', () => {
     }).compileComponents()
 
     documentService = TestBed.inject(DocumentService)
-    consumerStatusService = TestBed.inject(ConsumerStatusService)
+    websocketStatusService = TestBed.inject(WebsocketStatusService)
     documentListViewService = TestBed.inject(DocumentListViewService)
     router = TestBed.inject(Router)
     fixture = TestBed.createComponent(SavedViewWidgetComponent)
@@ -236,7 +235,7 @@ describe('SavedViewWidgetComponent', () => {
   it('should reload on document consumption finished', () => {
     const fileStatusSubject = new Subject<FileStatus>()
     jest
-      .spyOn(consumerStatusService, 'onDocumentConsumptionFinished')
+      .spyOn(websocketStatusService, 'onDocumentConsumptionFinished')
       .mockReturnValue(fileStatusSubject)
     const reloadSpy = jest.spyOn(component, 'reload')
     component.ngOnInit()
@@ -295,6 +294,15 @@ describe('SavedViewWidgetComponent', () => {
       { rule_type: FILTER_STORAGE_PATH, value: '11' },
     ])
     component.clickStoragePath(11) // coverage
+  })
+
+  it('should navigate via quickfilter on click owner', () => {
+    const qfSpy = jest.spyOn(documentListViewService, 'quickFilter')
+    component.clickOwner(11, new MouseEvent('click'))
+    expect(qfSpy).toHaveBeenCalledWith([
+      { rule_type: FILTER_OWNER_ANY, value: '11' },
+    ])
+    component.clickOwner(11) // coverage
   })
 
   it('should navigate via quickfilter on click more like', () => {

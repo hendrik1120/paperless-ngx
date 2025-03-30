@@ -81,8 +81,8 @@ $ docker compose down
 1.  If you pull the image from the docker hub, all you need to do is:
 
     ```shell-session
-    $ docker compose pull
-    $ docker compose up
+    docker compose pull
+    docker compose up
     ```
 
     The Docker Compose files refer to the `latest` version, which is
@@ -91,9 +91,9 @@ $ docker compose down
 1.  If you built the image yourself, do the following:
 
     ```shell-session
-    $ git pull
-    $ docker compose build
-    $ docker compose up
+    git pull
+    docker compose build
+    docker compose up
     ```
 
 Running `docker compose up` will also apply any new database migrations.
@@ -155,7 +155,7 @@ following:
     environment before that, if you use one.
 
     ```shell-session
-    $ pip install -r requirements.txt
+    pip install -r requirements.txt
     ```
 
     !!! note
@@ -168,8 +168,8 @@ following:
 3.  Migrate the database.
 
     ```shell-session
-    $ cd src
-    $ python3 manage.py migrate # (1)
+    cd src
+    python3 manage.py migrate # (1)
     ```
 
     1.  Including `sudo -Hu <paperless_user>` may be required
@@ -565,19 +565,15 @@ document.
 
 ### Managing encryption {#encryption}
 
-Documents can be stored in Paperless using GnuPG encryption.
-
 !!! warning
 
-    Encryption is deprecated since [paperless-ng 0.9](changelog.md#paperless-ng-090) and doesn't really
-    provide any additional security, since you have to store the passphrase
-    in a configuration file on the same system as the encrypted documents
-    for paperless to work. Furthermore, the entire text content of the
-    documents is stored plain in the database, even if your documents are
-    encrypted. Filenames are not encrypted as well.
-
-    Also, the web server provides transparent access to your encrypted
-    documents.
+    Encryption was removed in [paperless-ng 0.9](changelog.md#paperless-ng-090)
+    because it did not really provide any additional security, the passphrase
+    was stored in a configuration file on the same system as the documents.
+    Furthermore, the entire text content of the documents is stored plain in
+    the database, even if your documents are encrypted. Filenames are not
+    encrypted as well. Finally, the web server provides transparent access to
+    your encrypted documents.
 
     Consider running paperless on an encrypted filesystem instead, which
     will then at least provide security against physical hardware theft.
@@ -632,4 +628,12 @@ entries created prior to this are not removed. This command allows you to prune 
 
 ```shell
 prune_audit_logs
+```
+
+### Create superuser {#create-superuser}
+
+If you need to create a superuser, use the following command:
+
+```shell
+createsuperuser
 ```

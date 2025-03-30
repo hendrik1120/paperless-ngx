@@ -1,4 +1,5 @@
 import { convertToParamMap } from '@angular/router'
+import { CustomFieldQueryLogicalOperator } from '../data/custom-field-query'
 import { FilterRule } from '../data/filter-rule'
 import {
   FILTER_CORRESPONDENT,
@@ -7,12 +8,15 @@ import {
   FILTER_HAS_CUSTOM_FIELDS_ALL,
   FILTER_HAS_CUSTOM_FIELDS_ANY,
   FILTER_HAS_TAGS_ALL,
+  NEGATIVE_NULL_FILTER_VALUE,
 } from '../data/filter-rule-type'
-import { paramsToViewState, transformLegacyFilterRules } from './query-params'
-import { paramsFromViewState } from './query-params'
-import { queryParamsFromFilterRules } from './query-params'
-import { filterRulesFromQueryParams } from './query-params'
-import { CustomFieldQueryLogicalOperator } from '../data/custom-field-query'
+import {
+  filterRulesFromQueryParams,
+  paramsFromViewState,
+  paramsToViewState,
+  queryParamsFromFilterRules,
+  transformLegacyFilterRules,
+} from './query-params'
 
 const tags__id__all = '9'
 const filterRules: FilterRule[] = [
@@ -92,6 +96,16 @@ describe('QueryParams Utils', () => {
     ])
     expect(params).toEqual({
       correspondent__isnull: 1,
+    })
+
+    params = queryParamsFromFilterRules([
+      {
+        rule_type: FILTER_CORRESPONDENT,
+        value: NEGATIVE_NULL_FILTER_VALUE.toString(),
+      },
+    ])
+    expect(params).toEqual({
+      correspondent__isnull: 0,
     })
 
     params = queryParamsFromFilterRules([

@@ -1,31 +1,47 @@
-import { Component, OnInit, OnDestroy } from '@angular/core'
-import { NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import { AsyncPipe } from '@angular/common'
+import { Component, OnDestroy, OnInit } from '@angular/core'
+import { FormsModule, ReactiveFormsModule } from '@angular/forms'
+import { ActivatedRoute } from '@angular/router'
+import { NgbDropdownModule, NgbModal } from '@ng-bootstrap/ng-bootstrap'
+import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import { Subject, delay, first, takeUntil, tap } from 'rxjs'
-import { ObjectWithPermissions } from 'src/app/data/object-with-permissions'
 import { MailAccount, MailAccountType } from 'src/app/data/mail-account'
 import { MailRule } from 'src/app/data/mail-rule'
+import { ObjectWithPermissions } from 'src/app/data/object-with-permissions'
+import { SETTINGS_KEYS } from 'src/app/data/ui-settings'
+import { IfOwnerDirective } from 'src/app/directives/if-owner.directive'
+import { IfPermissionsDirective } from 'src/app/directives/if-permissions.directive'
 import {
-  PermissionsService,
   PermissionAction,
+  PermissionsService,
 } from 'src/app/services/permissions.service'
 import { AbstractPaperlessService } from 'src/app/services/rest/abstract-paperless-service'
 import { MailAccountService } from 'src/app/services/rest/mail-account.service'
 import { MailRuleService } from 'src/app/services/rest/mail-rule.service'
+import { SettingsService } from 'src/app/services/settings.service'
 import { ToastService } from 'src/app/services/toast.service'
 import { ConfirmDialogComponent } from '../../common/confirm-dialog/confirm-dialog.component'
 import { EditDialogMode } from '../../common/edit-dialog/edit-dialog.component'
 import { MailAccountEditDialogComponent } from '../../common/edit-dialog/mail-account-edit-dialog/mail-account-edit-dialog.component'
 import { MailRuleEditDialogComponent } from '../../common/edit-dialog/mail-rule-edit-dialog/mail-rule-edit-dialog.component'
+import { PageHeaderComponent } from '../../common/page-header/page-header.component'
 import { PermissionsDialogComponent } from '../../common/permissions-dialog/permissions-dialog.component'
 import { ComponentWithPermissions } from '../../with-permissions/with-permissions.component'
-import { SettingsService } from 'src/app/services/settings.service'
-import { SETTINGS_KEYS } from 'src/app/data/ui-settings'
-import { ActivatedRoute } from '@angular/router'
 
 @Component({
   selector: 'pngx-mail',
   templateUrl: './mail.component.html',
   styleUrls: ['./mail.component.scss'],
+  imports: [
+    PageHeaderComponent,
+    IfPermissionsDirective,
+    IfOwnerDirective,
+    AsyncPipe,
+    FormsModule,
+    ReactiveFormsModule,
+    NgbDropdownModule,
+    NgxBootstrapIconsModule,
+  ],
 })
 export class MailComponent
   extends ComponentWithPermissions
@@ -48,9 +64,9 @@ export class MailComponent
   }
 
   public loadingRules: boolean = true
-  public revealRules: boolean = false
+  public showRules: boolean = false
   public loadingAccounts: boolean = true
-  public revealAccounts: boolean = false
+  public showAccounts: boolean = false
 
   constructor(
     public mailAccountService: MailAccountService,
@@ -85,7 +101,7 @@ export class MailComponent
       .subscribe({
         next: () => {
           this.loadingAccounts = false
-          this.revealAccounts = true
+          this.showAccounts = true
         },
         error: (e) => {
           this.toastService.showError(
@@ -108,7 +124,7 @@ export class MailComponent
       .subscribe({
         next: (r) => {
           this.loadingRules = false
-          this.revealRules = true
+          this.showRules = true
         },
         error: (e) => {
           this.toastService.showError($localize`Error retrieving mail rules`, e)
@@ -184,7 +200,9 @@ export class MailComponent
       this.mailAccountService.delete(account).subscribe({
         next: () => {
           modal.close()
-          this.toastService.showInfo($localize`Deleted mail account`)
+          this.toastService.showInfo(
+            $localize`Deleted mail account "${account.name}"`
+          )
           this.mailAccountService.clearCache()
           this.mailAccountService
             .listAll(null, null, { full_perms: true })
@@ -194,11 +212,27 @@ export class MailComponent
         },
         error: (e) => {
           this.toastService.showError(
-            $localize`Error deleting mail account.`,
+            $localize`Error deleting mail account "${account.name}".`,
             e
           )
         },
       })
+    })
+  }
+
+  processAccount(account: MailAccount) {
+    this.mailAccountService.processAccount(account).subscribe({
+      next: () => {
+        this.toastService.showInfo(
+          $localize`Processing mail account "${account.name}"`
+        )
+      },
+      error: (e) => {
+        this.toastService.showError(
+          $localize`Error processing mail account "${account.name}"`,
+          e
+        )
+      },
     })
   }
 
@@ -245,7 +279,10 @@ export class MailComponent
         )
       },
       error: (e) => {
-        this.toastService.showError($localize`Error toggling rule.`, e)
+        this.toastService.showError(
+          $localize`Error toggling rule "${rule.name}".`,
+          e
+        )
       },
     })
   }
@@ -264,7 +301,9 @@ export class MailComponent
       this.mailRuleService.delete(rule).subscribe({
         next: () => {
           modal.close()
-          this.toastService.showInfo($localize`Deleted mail rule`)
+          this.toastService.showInfo(
+            $localize`Deleted mail rule "${rule.name}"`
+          )
           this.mailRuleService.clearCache()
           this.mailRuleService
             .listAll(null, null, { full_perms: true })
@@ -273,7 +312,10 @@ export class MailComponent
             })
         },
         error: (e) => {
-          this.toastService.showError($localize`Error deleting mail rule.`, e)
+          this.toastService.showError(
+            $localize`Error deleting mail rule "${rule.name}".`,
+            e
+          )
         },
       })
     })

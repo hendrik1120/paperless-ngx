@@ -1,53 +1,70 @@
-import { ViewportScroller } from '@angular/common'
+import { AsyncPipe, ViewportScroller } from '@angular/common'
 import {
-  Component,
-  OnInit,
   AfterViewInit,
-  OnDestroy,
+  Component,
   Inject,
   LOCALE_ID,
+  OnDestroy,
+  OnInit,
 } from '@angular/core'
-import { FormGroup, FormControl } from '@angular/forms'
+import {
+  FormControl,
+  FormGroup,
+  FormsModule,
+  ReactiveFormsModule,
+} from '@angular/forms'
 import { ActivatedRoute, Router } from '@angular/router'
 import {
   NgbModal,
   NgbModalRef,
   NgbNavChangeEvent,
+  NgbNavModule,
+  NgbPopoverModule,
 } from '@ng-bootstrap/ng-bootstrap'
 import { DirtyComponent, dirtyCheck } from '@ngneat/dirty-check-forms'
+import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import { TourService } from 'ngx-ui-tour-ng-bootstrap'
 import {
   BehaviorSubject,
-  Subscription,
   Observable,
   Subject,
+  Subscription,
   first,
   takeUntil,
   tap,
 } from 'rxjs'
 import { Group } from 'src/app/data/group'
+import {
+  SystemStatus,
+  SystemStatusItemStatus,
+} from 'src/app/data/system-status'
 import { GlobalSearchType, SETTINGS_KEYS } from 'src/app/data/ui-settings'
 import { User } from 'src/app/data/user'
+import { IfPermissionsDirective } from 'src/app/directives/if-permissions.directive'
+import { CustomDatePipe } from 'src/app/pipes/custom-date.pipe'
 import { DocumentListViewService } from 'src/app/services/document-list-view.service'
 import {
-  PermissionsService,
   PermissionAction,
   PermissionType,
+  PermissionsService,
 } from 'src/app/services/permissions.service'
 import { GroupService } from 'src/app/services/rest/group.service'
 import { UserService } from 'src/app/services/rest/user.service'
 import {
-  SettingsService,
   LanguageOption,
+  SettingsService,
 } from 'src/app/services/settings.service'
-import { ToastService, Toast } from 'src/app/services/toast.service'
-import { ComponentWithPermissions } from '../../with-permissions/with-permissions.component'
-import { SystemStatusDialogComponent } from '../../common/system-status-dialog/system-status-dialog.component'
 import { SystemStatusService } from 'src/app/services/system-status.service'
-import {
-  SystemStatusItemStatus,
-  SystemStatus,
-} from 'src/app/data/system-status'
+import { Toast, ToastService } from 'src/app/services/toast.service'
+import { CheckComponent } from '../../common/input/check/check.component'
+import { ColorComponent } from '../../common/input/color/color.component'
+import { PermissionsGroupComponent } from '../../common/input/permissions/permissions-group/permissions-group.component'
+import { PermissionsUserComponent } from '../../common/input/permissions/permissions-user/permissions-user.component'
+import { SelectComponent } from '../../common/input/select/select.component'
+import { PageHeaderComponent } from '../../common/page-header/page-header.component'
+import { SystemStatusDialogComponent } from '../../common/system-status-dialog/system-status-dialog.component'
+import { ZoomSetting } from '../../document-detail/document-detail.component'
+import { ComponentWithPermissions } from '../../with-permissions/with-permissions.component'
 
 enum SettingsNavIDs {
   General = 1,
@@ -66,6 +83,22 @@ const systemDateFormat = {
   selector: 'pngx-settings',
   templateUrl: './settings.component.html',
   styleUrls: ['./settings.component.scss'],
+  imports: [
+    PageHeaderComponent,
+    CheckComponent,
+    ColorComponent,
+    SelectComponent,
+    PermissionsGroupComponent,
+    PermissionsUserComponent,
+    CustomDatePipe,
+    IfPermissionsDirective,
+    AsyncPipe,
+    FormsModule,
+    ReactiveFormsModule,
+    NgbNavModule,
+    NgbPopoverModule,
+    NgxBootstrapIconsModule,
+  ],
 })
 export class SettingsComponent
   extends ComponentWithPermissions
@@ -93,6 +126,7 @@ export class SettingsComponent
     defaultPermsEditUsers: new FormControl(null),
     defaultPermsEditGroups: new FormControl(null),
     useNativePdfViewer: new FormControl(null),
+    pdfViewerDefaultZoom: new FormControl(null),
     documentEditingRemoveInboxTags: new FormControl(null),
     documentEditingOverlayThumbnail: new FormControl(null),
     searchDbOnly: new FormControl(null),
@@ -122,13 +156,18 @@ export class SettingsComponent
 
   public readonly GlobalSearchType = GlobalSearchType
 
+  public readonly ZoomSetting = ZoomSetting
+
   get systemStatusHasErrors(): boolean {
     return (
       this.systemStatus.database.status === SystemStatusItemStatus.ERROR ||
       this.systemStatus.tasks.redis_status === SystemStatusItemStatus.ERROR ||
       this.systemStatus.tasks.celery_status === SystemStatusItemStatus.ERROR ||
       this.systemStatus.tasks.index_status === SystemStatusItemStatus.ERROR ||
-      this.systemStatus.tasks.classifier_status === SystemStatusItemStatus.ERROR
+      this.systemStatus.tasks.classifier_status ===
+        SystemStatusItemStatus.ERROR ||
+      this.systemStatus.tasks.sanity_check_status ===
+        SystemStatusItemStatus.ERROR
     )
   }
 
@@ -243,6 +282,9 @@ export class SettingsComponent
       themeColor: this.settings.get(SETTINGS_KEYS.THEME_COLOR),
       useNativePdfViewer: this.settings.get(
         SETTINGS_KEYS.USE_NATIVE_PDF_VIEWER
+      ),
+      pdfViewerDefaultZoom: this.settings.get(
+        SETTINGS_KEYS.PDF_VIEWER_ZOOM_SETTING
       ),
       displayLanguage: this.settings.getLanguage(),
       dateLocale: this.settings.get(SETTINGS_KEYS.DATE_LOCALE),
@@ -402,6 +444,10 @@ export class SettingsComponent
     this.settings.set(
       SETTINGS_KEYS.USE_NATIVE_PDF_VIEWER,
       this.settingsForm.value.useNativePdfViewer
+    )
+    this.settings.set(
+      SETTINGS_KEYS.PDF_VIEWER_ZOOM_SETTING,
+      this.settingsForm.value.pdfViewerDefaultZoom
     )
     this.settings.set(
       SETTINGS_KEYS.DATE_LOCALE,

@@ -1,23 +1,34 @@
+from __future__ import annotations
+
 import functools
 import inspect
 import json
 import operator
-from collections.abc import Callable
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Case
 from django.db.models import CharField
 from django.db.models import Count
+from django.db.models import Exists
+from django.db.models import IntegerField
 from django.db.models import OuterRef
 from django.db.models import Q
+from django.db.models import Subquery
+from django.db.models import Sum
+from django.db.models import Value
+from django.db.models import When
 from django.db.models.functions import Cast
 from django.utils.translation import gettext_lazy as _
 from django_filters.rest_framework import BooleanFilter
 from django_filters.rest_framework import Filter
 from django_filters.rest_framework import FilterSet
+from drf_spectacular.utils import extend_schema_field
 from guardian.utils import get_group_obj_perms_model
 from guardian.utils import get_user_obj_perms_model
 from rest_framework import serializers
+from rest_framework.filters import OrderingFilter
 from rest_framework_guardian.filters import ObjectPermissionsFilter
 
 from documents.models import Correspondent
@@ -25,15 +36,30 @@ from documents.models import CustomField
 from documents.models import CustomFieldInstance
 from documents.models import Document
 from documents.models import DocumentType
-from documents.models import Log
+from documents.models import PaperlessTask
 from documents.models import ShareLink
 from documents.models import StoragePath
 from documents.models import Tag
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 CHAR_KWARGS = ["istartswith", "iendswith", "icontains", "iexact"]
 ID_KWARGS = ["in", "exact"]
 INT_KWARGS = ["exact", "gt", "gte", "lt", "lte", "isnull"]
-DATE_KWARGS = ["year", "month", "day", "date__gt", "gt", "date__lt", "lt"]
+DATE_KWARGS = [
+    "year",
+    "month",
+    "day",
+    "date__gt",
+    "date__gte",
+    "gt",
+    "gte",
+    "date__lt",
+    "date__lte",
+    "lt",
+    "lte",
+]
 
 CUSTOM_FIELD_QUERY_MAX_DEPTH = 10
 CUSTOM_FIELD_QUERY_MAX_ATOMS = 20
@@ -77,7 +103,7 @@ class StoragePathFilterSet(FilterSet):
 
 
 class ObjectFilter(Filter):
-    def __init__(self, exclude=False, in_list=False, field_name=""):
+    def __init__(self, *, exclude=False, in_list=False, field_name=""):
         super().__init__()
         self.exclude = exclude
         self.in_list = in_list
@@ -104,6 +130,7 @@ class ObjectFilter(Filter):
         return qs
 
 
+@extend_schema_field(serializers.BooleanField)
 class InboxFilter(Filter):
     def filter(self, qs, value):
         if value == "true":
@@ -114,6 +141,7 @@ class InboxFilter(Filter):
             return qs
 
 
+@extend_schema_field(serializers.CharField)
 class TitleContentFilter(Filter):
     def filter(self, qs, value):
         if value:
@@ -122,6 +150,7 @@ class TitleContentFilter(Filter):
             return qs
 
 
+@extend_schema_field(serializers.BooleanField)
 class SharedByUser(Filter):
     def filter(self, qs, value):
         ctype = ContentType.objects.get_for_model(self.model)
@@ -166,6 +195,7 @@ class CustomFieldFilterSet(FilterSet):
         }
 
 
+@extend_schema_field(serializers.CharField)
 class CustomFieldsFilter(Filter):
     def filter(self, qs, value):
         if value:
@@ -191,6 +221,14 @@ class CustomFieldsFilter(Filter):
                 | qs.filter(custom_fields__value_document_ids__icontains=value)
                 | qs.filter(custom_fields__value_select__in=option_ids)
             )
+        else:
+            return qs
+
+
+class MimeTypeFilter(Filter):
+    def filter(self, qs, value):
+        if value:
+            return qs.filter(mime_type__icontains=value)
         else:
             return qs
 
@@ -614,6 +652,7 @@ class CustomFieldQueryParser:
             self._current_depth -= 1
 
 
+@extend_schema_field(serializers.CharField)
 class CustomFieldQueryFilter(Filter):
     def __init__(self, validation_prefix):
         """
@@ -690,6 +729,8 @@ class DocumentFilterSet(FilterSet):
 
     shared_by__id = SharedByUser()
 
+    mime_type = MimeTypeFilter()
+
     class Meta:
         model = Document
         fields = {
@@ -719,18 +760,27 @@ class DocumentFilterSet(FilterSet):
         }
 
 
-class LogFilterSet(FilterSet):
-    class Meta:
-        model = Log
-        fields = {"level": INT_KWARGS, "created": DATE_KWARGS, "group": ID_KWARGS}
-
-
 class ShareLinkFilterSet(FilterSet):
     class Meta:
         model = ShareLink
         fields = {
             "created": DATE_KWARGS,
             "expiration": DATE_KWARGS,
+        }
+
+
+class PaperlessTaskFilterSet(FilterSet):
+    acknowledged = BooleanFilter(
+        label="Acknowledged",
+        field_name="acknowledged",
+    )
+
+    class Meta:
+        model = PaperlessTask
+        fields = {
+            "type": ["exact"],
+            "task_name": ["exact"],
+            "status": ["exact"],
         }
 
 
@@ -760,3 +810,141 @@ class ObjectOwnedPermissionsFilter(ObjectPermissionsFilter):
         objects_owned = queryset.filter(owner=request.user)
         objects_unowned = queryset.filter(owner__isnull=True)
         return objects_owned | objects_unowned
+
+
+class DocumentsOrderingFilter(OrderingFilter):
+    field_name = "ordering"
+    prefix = "custom_field_"
+
+    def filter_queryset(self, request, queryset, view):
+        param = request.query_params.get("ordering")
+        if param and self.prefix in param:
+            custom_field_id = int(param.split(self.prefix)[1])
+            try:
+                field = CustomField.objects.get(pk=custom_field_id)
+            except CustomField.DoesNotExist:
+                raise serializers.ValidationError(
+                    {self.prefix + str(custom_field_id): [_("Custom field not found")]},
+                )
+
+            annotation = None
+            match field.data_type:
+                case CustomField.FieldDataType.STRING:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_text")[:1],
+                    )
+                case CustomField.FieldDataType.INT:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_int")[:1],
+                    )
+                case CustomField.FieldDataType.FLOAT:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_float")[:1],
+                    )
+                case CustomField.FieldDataType.DATE:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_date")[:1],
+                    )
+                case CustomField.FieldDataType.MONETARY:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_monetary_amount")[:1],
+                    )
+                case CustomField.FieldDataType.SELECT:
+                    # Select options are a little more complicated since the value is the id of the option, not
+                    # the label. Additionally, to support sqlite we can't use StringAgg, so we need to create a
+                    # case statement for each option, setting the value to the index of the option in a list
+                    # sorted by label, and then summing the results to give a single value for the annotation
+
+                    select_options = sorted(
+                        field.extra_data.get("select_options", []),
+                        key=lambda x: x.get("label"),
+                    )
+                    whens = [
+                        When(
+                            custom_fields__field_id=custom_field_id,
+                            custom_fields__value_select=option.get("id"),
+                            then=Value(idx, output_field=IntegerField()),
+                        )
+                        for idx, option in enumerate(select_options)
+                    ]
+                    whens.append(
+                        When(
+                            custom_fields__field_id=custom_field_id,
+                            custom_fields__value_select__isnull=True,
+                            then=Value(
+                                len(select_options),
+                                output_field=IntegerField(),
+                            ),
+                        ),
+                    )
+                    annotation = Sum(
+                        Case(
+                            *whens,
+                            default=Value(0),
+                            output_field=IntegerField(),
+                        ),
+                    )
+                case CustomField.FieldDataType.DOCUMENTLINK:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_document_ids")[:1],
+                    )
+                case CustomField.FieldDataType.URL:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_url")[:1],
+                    )
+                case CustomField.FieldDataType.BOOL:
+                    annotation = Subquery(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ).values("value_bool")[:1],
+                    )
+
+            if not annotation:
+                # Only happens if a new data type is added and not handled here
+                raise ValueError("Invalid custom field data type")
+
+            queryset = (
+                queryset.annotate(
+                    # We need to annotate the queryset with the custom field value
+                    custom_field_value=annotation,
+                    # We also need to annotate the queryset with a boolean for sorting whether the field exists
+                    has_field=Exists(
+                        CustomFieldInstance.objects.filter(
+                            document_id=OuterRef("id"),
+                            field_id=custom_field_id,
+                        ),
+                    ),
+                )
+                .order_by(
+                    "-has_field",
+                    param.replace(
+                        self.prefix + str(custom_field_id),
+                        "custom_field_value",
+                    ),
+                )
+                .distinct()
+            )
+
+        return super().filter_queryset(request, queryset, view)

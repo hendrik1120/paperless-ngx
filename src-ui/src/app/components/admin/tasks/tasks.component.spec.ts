@@ -1,25 +1,30 @@
 import { DatePipe } from '@angular/common'
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 import {
   HttpTestingController,
   provideHttpClientTesting,
 } from '@angular/common/http/testing'
 import { ComponentFixture, TestBed } from '@angular/core/testing'
+import { FormsModule } from '@angular/forms'
 import { By } from '@angular/platform-browser'
 import { Router } from '@angular/router'
 import { RouterTestingModule } from '@angular/router/testing'
 import {
   NgbModal,
+  NgbModalRef,
   NgbModule,
   NgbNavItem,
-  NgbModalRef,
 } from '@ng-bootstrap/ng-bootstrap'
+import { allIcons, NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import { routes } from 'src/app/app-routing.module'
 import {
   PaperlessTask,
-  PaperlessTaskType,
+  PaperlessTaskName,
   PaperlessTaskStatus,
+  PaperlessTaskType,
 } from 'src/app/data/paperless-task'
 import { IfPermissionsDirective } from 'src/app/directives/if-permissions.directive'
+import { PermissionsGuard } from 'src/app/guards/permissions.guard'
 import { CustomDatePipe } from 'src/app/pipes/custom-date.pipe'
 import { PermissionsService } from 'src/app/services/permissions.service'
 import { TasksService } from 'src/app/services/tasks.service'
@@ -27,10 +32,6 @@ import { environment } from 'src/environments/environment'
 import { ConfirmDialogComponent } from '../../common/confirm-dialog/confirm-dialog.component'
 import { PageHeaderComponent } from '../../common/page-header/page-header.component'
 import { TasksComponent, TaskTab } from './tasks.component'
-import { PermissionsGuard } from 'src/app/guards/permissions.guard'
-import { NgxBootstrapIconsModule, allIcons } from 'ngx-bootstrap-icons'
-import { FormsModule } from '@angular/forms'
-import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 const tasks: PaperlessTask[] = [
   {
@@ -39,7 +40,8 @@ const tasks: PaperlessTask[] = [
     task_file_name: 'test.pdf',
     date_created: new Date('2023-03-01T10:26:03.093116Z'),
     date_done: new Date('2023-03-01T10:26:07.223048Z'),
-    type: PaperlessTaskType.File,
+    type: PaperlessTaskType.Auto,
+    task_name: PaperlessTaskName.ConsumeFile,
     status: PaperlessTaskStatus.Failed,
     result: 'test.pd: Not consuming test.pdf: It is a duplicate of test (#100)',
     acknowledged: false,
@@ -51,7 +53,8 @@ const tasks: PaperlessTask[] = [
     task_file_name: '191092.pdf',
     date_created: new Date('2023-03-01T09:26:03.093116Z'),
     date_done: new Date('2023-03-01T09:26:07.223048Z'),
-    type: PaperlessTaskType.File,
+    type: PaperlessTaskType.Auto,
+    task_name: PaperlessTaskName.ConsumeFile,
     status: PaperlessTaskStatus.Failed,
     result:
       '191092.pd: Not consuming 191092.pdf: It is a duplicate of 191092 (#311)',
@@ -64,7 +67,8 @@ const tasks: PaperlessTask[] = [
     task_file_name: 'Scan Jun 6, 2023 at 3.19 PM.pdf',
     date_created: new Date('2023-06-06T15:22:05.722323-07:00'),
     date_done: new Date('2023-06-06T15:22:14.564305-07:00'),
-    type: PaperlessTaskType.File,
+    type: PaperlessTaskType.Auto,
+    task_name: PaperlessTaskName.ConsumeFile,
     status: PaperlessTaskStatus.Pending,
     result: null,
     acknowledged: false,
@@ -76,7 +80,8 @@ const tasks: PaperlessTask[] = [
     task_file_name: 'paperless-mail-l4dkg8ir',
     date_created: new Date('2023-06-04T11:24:32.898089-07:00'),
     date_done: new Date('2023-06-04T11:24:44.678605-07:00'),
-    type: PaperlessTaskType.File,
+    type: PaperlessTaskType.Auto,
+    task_name: PaperlessTaskName.ConsumeFile,
     status: PaperlessTaskStatus.Complete,
     result: 'Success. New document id 422 created',
     acknowledged: false,
@@ -88,7 +93,8 @@ const tasks: PaperlessTask[] = [
     task_file_name: 'onlinePaymentSummary.pdf',
     date_created: new Date('2023-06-01T13:49:51.631305-07:00'),
     date_done: new Date('2023-06-01T13:49:54.190220-07:00'),
-    type: PaperlessTaskType.File,
+    type: PaperlessTaskType.Auto,
+    task_name: PaperlessTaskName.ConsumeFile,
     status: PaperlessTaskStatus.Complete,
     result: 'Success. New document id 421 created',
     acknowledged: false,
@@ -100,7 +106,8 @@ const tasks: PaperlessTask[] = [
     task_file_name: 'paperless-mail-_rrpmqk6',
     date_created: new Date('2023-06-07T02:54:35.694916Z'),
     date_done: null,
-    type: PaperlessTaskType.File,
+    type: PaperlessTaskType.Auto,
+    task_name: PaperlessTaskName.ConsumeFile,
     status: PaperlessTaskStatus.Started,
     result: null,
     acknowledged: false,
@@ -119,18 +126,16 @@ describe('TasksComponent', () => {
 
   beforeEach(async () => {
     TestBed.configureTestingModule({
-      declarations: [
-        TasksComponent,
-        PageHeaderComponent,
-        IfPermissionsDirective,
-        CustomDatePipe,
-        ConfirmDialogComponent,
-      ],
       imports: [
         NgbModule,
         RouterTestingModule.withRoutes(routes),
         NgxBootstrapIconsModule.pick(allIcons),
         FormsModule,
+        TasksComponent,
+        PageHeaderComponent,
+        IfPermissionsDirective,
+        CustomDatePipe,
+        ConfirmDialogComponent,
       ],
       providers: [
         {
@@ -157,7 +162,9 @@ describe('TasksComponent', () => {
     jest.useFakeTimers()
     fixture.detectChanges()
     httpTestingController
-      .expectOne(`${environment.apiBaseUrl}tasks/`)
+      .expectOne(
+        `${environment.apiBaseUrl}tasks/?task_name=consume_file&acknowledged=false`
+      )
       .flush(tasks)
   })
 
@@ -283,9 +290,7 @@ describe('TasksComponent', () => {
     expect(reloadSpy).toHaveBeenCalledTimes(1)
     jest.advanceTimersByTime(5000)
     expect(reloadSpy).toHaveBeenCalledTimes(2)
-
-    component.toggleAutoRefresh()
-    expect(component.autoRefreshInterval).toBeNull()
+    component.autoRefreshEnabled = false
     jest.advanceTimersByTime(6000)
     expect(reloadSpy).toHaveBeenCalledTimes(2)
   })

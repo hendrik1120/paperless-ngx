@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import logging
 import os
 import shutil
+from typing import TYPE_CHECKING
 
 import httpx
 from celery import shared_task
@@ -10,11 +13,7 @@ from celery.signals import task_failure
 from celery.signals import task_postrun
 from celery.signals import task_prerun
 from django.conf import settings
-from django.contrib.admin.models import ADDITION
-from django.contrib.admin.models import LogEntry
 from django.contrib.auth.models import User
-from django.contrib.contenttypes.models import ContentType
-from django.core.mail import EmailMessage
 from django.db import DatabaseError
 from django.db import close_old_connections
 from django.db import models
@@ -26,17 +25,18 @@ from guardian.shortcuts import remove_perm
 
 from documents import matching
 from documents.caching import clear_document_caches
-from documents.classifier import DocumentClassifier
-from documents.data_models import ConsumableDocument
-from documents.data_models import DocumentMetadataOverrides
 from documents.file_handling import create_source_path_directory
 from documents.file_handling import delete_empty_directories
 from documents.file_handling import generate_unique_filename
+from documents.mail import send_email
+from documents.models import Correspondent
 from documents.models import CustomField
 from documents.models import CustomFieldInstance
 from documents.models import Document
+from documents.models import DocumentType
 from documents.models import MatchingModel
 from documents.models import PaperlessTask
+from documents.models import SavedView
 from documents.models import Tag
 from documents.models import Workflow
 from documents.models import WorkflowAction
@@ -45,6 +45,13 @@ from documents.models import WorkflowTrigger
 from documents.permissions import get_objects_for_user_owner_aware
 from documents.permissions import set_permissions_for_object
 from documents.templating.workflows import parse_w_workflow_placeholders
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from documents.classifier import DocumentClassifier
+    from documents.data_models import ConsumableDocument
+    from documents.data_models import DocumentMetadataOverrides
 
 logger = logging.getLogger("paperless.handlers")
 
@@ -85,6 +92,7 @@ def _suggestion_printer(
 def set_correspondent(
     sender,
     document: Document,
+    *,
     logging_group=None,
     classifier: DocumentClassifier | None = None,
     replace=False,
@@ -140,6 +148,7 @@ def set_correspondent(
 def set_document_type(
     sender,
     document: Document,
+    *,
     logging_group=None,
     classifier: DocumentClassifier | None = None,
     replace=False,
@@ -196,6 +205,7 @@ def set_document_type(
 def set_tags(
     sender,
     document: Document,
+    *,
     logging_group=None,
     classifier: DocumentClassifier | None = None,
     replace=False,
@@ -251,6 +261,7 @@ def set_tags(
 def set_storage_path(
     sender,
     document: Document,
+    *,
     logging_group=None,
     classifier: DocumentClassifier | None = None,
     replace=False,
@@ -353,7 +364,7 @@ def cleanup_document_deletion(sender, instance, **kwargs):
                         f"{filename} could not be deleted: {e}",
                     )
             elif filename and not os.path.isfile(filename):
-                logger.warn(f"Expected {filename} tp exist, but it did not")
+                logger.warning(f"Expected {filename} to exist, but it did not")
 
         delete_empty_directories(
             os.path.dirname(instance.source_path),
@@ -521,34 +532,49 @@ def check_paths_and_prune_custom_fields(sender, instance: CustomField, **kwargs)
     """
     if (
         instance.data_type == CustomField.FieldDataType.SELECT
+        and instance.fields.count() > 0
+        and instance.extra_data
     ):  # Only select fields, for now
+        select_options = {
+            option["id"]: option["label"]
+            for option in instance.extra_data.get("select_options", [])
+        }
+
         for cf_instance in instance.fields.all():
-            options = instance.extra_data.get("select_options", [])
-            try:
-                next(
-                    option["label"]
-                    for option in options
-                    if option["id"] == cf_instance.value
-                )
-            except StopIteration:
-                # The value of this custom field instance is not in the select options anymore
+            # Check if the current value is still a valid option
+            if cf_instance.value not in select_options:
                 cf_instance.value_select = None
-                cf_instance.save()
+                cf_instance.save(update_fields=["value_select"])
+
+            # Update the filename and move files if necessary
             update_filename_and_move_files(sender, cf_instance)
 
 
-def set_log_entry(sender, document: Document, logging_group=None, **kwargs):
-    ct = ContentType.objects.get(model="document")
-    user = User.objects.get(username="consumer")
+@receiver(models.signals.post_delete, sender=CustomField)
+def cleanup_custom_field_deletion(sender, instance: CustomField, **kwargs):
+    """
+    When a custom field is deleted, ensure no saved views reference it.
+    """
+    field_identifier = SavedView.DisplayFields.CUSTOM_FIELD % instance.pk
+    # remove field from display_fields of all saved views
+    for view in SavedView.objects.filter(display_fields__isnull=False).distinct():
+        if field_identifier in view.display_fields:
+            logger.debug(
+                f"Removing custom field {instance} from view {view}",
+            )
+            view.display_fields.remove(field_identifier)
+            view.save()
 
-    LogEntry.objects.create(
-        action_flag=ADDITION,
-        action_time=timezone.now(),
-        content_type=ct,
-        object_id=document.pk,
-        user=user,
-        object_repr=document.__str__(),
+    # remove from sort_field of all saved views
+    views_with_sort_updated = SavedView.objects.filter(
+        sort_field=field_identifier,
+    ).update(
+        sort_field=SavedView.DisplayFields.CREATED,
     )
+    if views_with_sort_updated > 0:
+        logger.debug(
+            f"Removing custom field {instance} from sort field of {views_with_sort_updated} views",
+        )
 
 
 def add_to_index(sender, document, **kwargs):
@@ -557,19 +583,27 @@ def add_to_index(sender, document, **kwargs):
     index.add_or_update_document(document)
 
 
-def run_workflows_added(sender, document: Document, logging_group=None, **kwargs):
+def run_workflows_added(
+    sender,
+    document: Document,
+    logging_group=None,
+    original_file=None,
+    **kwargs,
+):
     run_workflows(
-        WorkflowTrigger.WorkflowTriggerType.DOCUMENT_ADDED,
-        document,
-        logging_group,
+        trigger_type=WorkflowTrigger.WorkflowTriggerType.DOCUMENT_ADDED,
+        document=document,
+        logging_group=logging_group,
+        overrides=None,
+        original_file=original_file,
     )
 
 
 def run_workflows_updated(sender, document: Document, logging_group=None, **kwargs):
     run_workflows(
-        WorkflowTrigger.WorkflowTriggerType.DOCUMENT_UPDATED,
-        document,
-        logging_group,
+        trigger_type=WorkflowTrigger.WorkflowTriggerType.DOCUMENT_UPDATED,
+        document=document,
+        logging_group=logging_group,
     )
 
 
@@ -579,14 +613,29 @@ def run_workflows_updated(sender, document: Document, logging_group=None, **kwar
     max_retries=3,
     throws=(httpx.HTTPError,),
 )
-def send_webhook(url, data, headers, files):
+def send_webhook(
+    url: str,
+    data: str | dict,
+    headers: dict,
+    files: dict,
+    *,
+    as_json: bool = False,
+):
     try:
-        httpx.post(
-            url,
-            data=data,
-            files=files,
-            headers=headers,
-        ).raise_for_status()
+        if as_json:
+            httpx.post(
+                url,
+                json=data,
+                files=files,
+                headers=headers,
+            ).raise_for_status()
+        else:
+            httpx.post(
+                url,
+                content=data,
+                files=files,
+                headers=headers,
+            ).raise_for_status()
         logger.info(
             f"Webhook sent to {url}",
         )
@@ -602,6 +651,7 @@ def run_workflows(
     document: Document | ConsumableDocument,
     logging_group=None,
     overrides: DocumentMetadataOverrides | None = None,
+    original_file: Path | None = None,
 ) -> tuple[DocumentMetadataOverrides, str] | None:
     """Run workflows which match a Document (or ConsumableDocument) for a specific trigger type.
 
@@ -720,23 +770,40 @@ def run_workflows(
         if action.assign_custom_fields.exists():
             if not use_overrides:
                 for field in action.assign_custom_fields.all():
-                    if not CustomFieldInstance.objects.filter(
+                    value_field_name = CustomFieldInstance.get_value_field_name(
+                        data_type=field.data_type,
+                    )
+                    args = {
+                        value_field_name: action.assign_custom_fields_values.get(
+                            str(field.pk),
+                            None,
+                        ),
+                    }
+                    # for some reason update_or_create doesn't work here
+                    instance = CustomFieldInstance.objects.filter(
                         field=field,
                         document=document,
-                    ).exists():
-                        # can be triggered on existing docs, so only add the field if it doesn't already exist
+                    ).first()
+                    if instance and args[value_field_name] is not None:
+                        setattr(instance, value_field_name, args[value_field_name])
+                        instance.save()
+                    elif not instance:
                         CustomFieldInstance.objects.create(
+                            **args,
                             field=field,
                             document=document,
                         )
             else:
-                overrides.custom_field_ids = list(
-                    set(
-                        (overrides.custom_field_ids or [])
-                        + list(
-                            action.assign_custom_fields.values_list("pk", flat=True),
-                        ),
-                    ),
+                if overrides.custom_fields is None:
+                    overrides.custom_fields = {}
+                overrides.custom_fields.update(
+                    {
+                        field.pk: action.assign_custom_fields_values.get(
+                            str(field.pk),
+                            None,
+                        )
+                        for field in action.assign_custom_fields.all()
+                    },
                 )
 
     def removal_action():
@@ -894,18 +961,18 @@ def run_workflows(
             if not use_overrides:
                 CustomFieldInstance.objects.filter(document=document).delete()
             else:
-                overrides.custom_field_ids = None
+                overrides.custom_fields = None
         elif action.remove_custom_fields.exists():
             if not use_overrides:
                 CustomFieldInstance.objects.filter(
                     field__in=action.remove_custom_fields.all(),
                     document=document,
                 ).delete()
-            elif overrides.custom_field_ids:
+            elif overrides.custom_fields:
                 for field in action.remove_custom_fields.filter(
-                    pk__in=overrides.custom_field_ids,
+                    pk__in=overrides.custom_fields.keys(),
                 ):
-                    overrides.custom_field_ids.remove(field.pk)
+                    overrides.custom_fields.pop(field.pk, None)
 
     def email_action():
         if not settings.EMAIL_ENABLED:
@@ -915,54 +982,83 @@ def run_workflows(
             )
             return
 
-        title = (
-            document.title
-            if isinstance(document, Document)
-            else str(document.original_file)
-        )
-        doc_url = None
-        if isinstance(document, Document):
+        if not use_overrides:
+            title = document.title
             doc_url = f"{settings.PAPERLESS_URL}/documents/{document.pk}/"
-        correspondent = document.correspondent.name if document.correspondent else ""
-        document_type = document.document_type.name if document.document_type else ""
-        owner_username = document.owner.username if document.owner else ""
-        filename = document.original_filename or ""
-        current_filename = document.filename or ""
-        added = timezone.localtime(document.added)
-        created = timezone.localtime(document.created)
-        subject = parse_w_workflow_placeholders(
-            action.email.subject,
-            correspondent,
-            document_type,
-            owner_username,
-            added,
-            filename,
-            current_filename,
-            created,
-            title,
-            doc_url,
+            correspondent = (
+                document.correspondent.name if document.correspondent else ""
+            )
+            document_type = (
+                document.document_type.name if document.document_type else ""
+            )
+            owner_username = document.owner.username if document.owner else ""
+            filename = document.original_filename or ""
+            current_filename = document.filename or ""
+            added = timezone.localtime(document.added)
+            created = timezone.localtime(document.created)
+        else:
+            title = overrides.title if overrides.title else str(document.original_file)
+            doc_url = ""
+            correspondent = (
+                Correspondent.objects.filter(pk=overrides.correspondent_id).first()
+                if overrides.correspondent_id
+                else ""
+            )
+            document_type = (
+                DocumentType.objects.filter(pk=overrides.document_type_id).first().name
+                if overrides.document_type_id
+                else ""
+            )
+            owner_username = (
+                User.objects.filter(pk=overrides.owner_id).first().username
+                if overrides.owner_id
+                else ""
+            )
+            filename = document.original_file if document.original_file else ""
+            current_filename = filename
+            added = timezone.localtime(timezone.now())
+            created = timezone.localtime(overrides.created)
+
+        subject = (
+            parse_w_workflow_placeholders(
+                action.email.subject,
+                correspondent,
+                document_type,
+                owner_username,
+                added,
+                filename,
+                current_filename,
+                created,
+                title,
+                doc_url,
+            )
+            if action.email.subject
+            else ""
         )
-        body = parse_w_workflow_placeholders(
-            action.email.body,
-            correspondent,
-            document_type,
-            owner_username,
-            added,
-            filename,
-            current_filename,
-            created,
-            title,
-            doc_url,
+        body = (
+            parse_w_workflow_placeholders(
+                action.email.body,
+                correspondent,
+                document_type,
+                owner_username,
+                added,
+                filename,
+                current_filename,
+                created,
+                title,
+                doc_url,
+            )
+            if action.email.body
+            else ""
         )
         try:
-            email = EmailMessage(
+            n_messages = send_email(
                 subject=subject,
                 body=body,
                 to=action.email.to.split(","),
+                attachment=original_file if action.email.include_document else None,
+                attachment_mime_type=document.mime_type,
             )
-            if action.email.include_document:
-                email.attach_file(document.source_path)
-            n_messages = email.send()
             logger.debug(
                 f"Sent {n_messages} notification email(s) to {action.email.to}",
                 extra={"group": logging_group},
@@ -974,45 +1070,67 @@ def run_workflows(
             )
 
     def webhook_action():
-        title = (
-            document.title
-            if isinstance(document, Document)
-            else str(document.original_file)
-        )
-        doc_url = None
-        if isinstance(document, Document):
+        if not use_overrides:
+            title = document.title
             doc_url = f"{settings.PAPERLESS_URL}/documents/{document.pk}/"
-        correspondent = document.correspondent.name if document.correspondent else ""
-        document_type = document.document_type.name if document.document_type else ""
-        owner_username = document.owner.username if document.owner else ""
-        filename = document.original_filename or ""
-        current_filename = document.filename or ""
-        added = timezone.localtime(document.added)
-        created = timezone.localtime(document.created)
+            correspondent = (
+                document.correspondent.name if document.correspondent else ""
+            )
+            document_type = (
+                document.document_type.name if document.document_type else ""
+            )
+            owner_username = document.owner.username if document.owner else ""
+            filename = document.original_filename or ""
+            current_filename = document.filename or ""
+            added = timezone.localtime(document.added)
+            created = timezone.localtime(document.created)
+        else:
+            title = overrides.title if overrides.title else str(document.original_file)
+            doc_url = ""
+            correspondent = (
+                Correspondent.objects.filter(pk=overrides.correspondent_id).first()
+                if overrides.correspondent_id
+                else ""
+            )
+            document_type = (
+                DocumentType.objects.filter(pk=overrides.document_type_id).first().name
+                if overrides.document_type_id
+                else ""
+            )
+            owner_username = (
+                User.objects.filter(pk=overrides.owner_id).first().username
+                if overrides.owner_id
+                else ""
+            )
+            filename = document.original_file if document.original_file else ""
+            current_filename = filename
+            added = timezone.localtime(timezone.now())
+            created = timezone.localtime(overrides.created)
 
         try:
             data = {}
             if action.webhook.use_params:
-                try:
-                    for key, value in action.webhook.params.items():
-                        data[key] = parse_w_workflow_placeholders(
-                            value,
-                            correspondent,
-                            document_type,
-                            owner_username,
-                            added,
-                            filename,
-                            current_filename,
-                            created,
-                            title,
-                            doc_url,
+                if action.webhook.params:
+                    try:
+                        for key, value in action.webhook.params.items():
+                            data[key] = parse_w_workflow_placeholders(
+                                value,
+                                correspondent,
+                                document_type,
+                                owner_username,
+                                added,
+                                filename,
+                                current_filename,
+                                created,
+                                title,
+                                doc_url,
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error occurred parsing webhook params: {e}",
+                            extra={"group": logging_group},
                         )
-                except Exception as e:
-                    logger.error(
-                        f"Error occurred parsing webhook params: {e}",
-                        extra={"group": logging_group},
-                    )
-            else:
+            elif action.webhook.body:
                 data = parse_w_workflow_placeholders(
                     action.webhook.body,
                     correspondent,
@@ -1038,15 +1156,23 @@ def run_workflows(
                     )
             files = None
             if action.webhook.include_document:
-                with open(document.source_path, "rb") as f:
+                with open(
+                    original_file,
+                    "rb",
+                ) as f:
                     files = {
-                        "file": (document.original_filename, f, document.mime_type),
+                        "file": (
+                            filename,
+                            f.read(),
+                            document.mime_type,
+                        ),
                     }
             send_webhook.delay(
                 url=action.webhook.url,
                 data=data,
                 headers=headers,
                 files=files,
+                as_json=action.webhook.as_json,
             )
             logger.debug(
                 f"Webhook to {action.webhook.url} queued",
@@ -1059,6 +1185,10 @@ def run_workflows(
             )
 
     use_overrides = overrides is not None
+    if original_file is None:
+        original_file = (
+            document.source_path if not use_overrides else document.original_file
+        )
     messages = []
 
     workflows = (
@@ -1109,6 +1239,8 @@ def run_workflows(
                     webhook_action()
 
             if not use_overrides:
+                # limit title to 128 characters
+                document.title = document.title[:128]
                 # save first before setting tags
                 document.save()
                 document.tags.set(doc_tag_ids)
@@ -1148,10 +1280,11 @@ def before_task_publish_handler(sender=None, headers=None, body=None, **kwargs):
         user_id = overrides.owner_id if overrides else None
 
         PaperlessTask.objects.create(
+            type=PaperlessTask.TaskType.AUTO,
             task_id=headers["id"],
             status=states.PENDING,
             task_file_name=task_file_name,
-            task_name=headers["task"],
+            task_name=PaperlessTask.TaskName.CONSUME_FILE,
             result=None,
             date_created=timezone.now(),
             date_started=None,

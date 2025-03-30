@@ -11,6 +11,7 @@ from guardian.shortcuts import assign_perm
 from guardian.shortcuts import get_groups_with_perms
 from guardian.shortcuts import get_users_with_perms
 from httpx import HTTPStatusError
+from pytest_httpx import HTTPXMock
 from rest_framework.test import APITestCase
 
 from documents.signals.handlers import run_workflows
@@ -132,6 +133,9 @@ class TestWorkflows(
         action.assign_change_groups.add(self.group1.pk)
         action.assign_custom_fields.add(self.cf1.pk)
         action.assign_custom_fields.add(self.cf2.pk)
+        action.assign_custom_fields_values = {
+            self.cf2.pk: 42,
+        }
         action.save()
         w = Workflow.objects.create(
             name="Workflow 1",
@@ -207,6 +211,10 @@ class TestWorkflows(
                 self.assertEqual(
                     list(document.custom_fields.all().values_list("field", flat=True)),
                     [self.cf1.pk, self.cf2.pk],
+                )
+                self.assertEqual(
+                    document.custom_fields.get(field=self.cf2.pk).value,
+                    42,
                 )
 
         info = cm.output[0]
@@ -1214,11 +1222,11 @@ class TestWorkflows(
     def test_document_updated_workflow_existing_custom_field(self):
         """
         GIVEN:
-            - Existing workflow with UPDATED trigger and action that adds a custom field
+            - Existing workflow with UPDATED trigger and action that assigns a custom field with a value
         WHEN:
             - Document is updated that already contains the field
         THEN:
-            - Document update succeeds without trying to re-create the field
+            - Document update succeeds and updates the field
         """
         trigger = WorkflowTrigger.objects.create(
             type=WorkflowTrigger.WorkflowTriggerType.DOCUMENT_UPDATED,
@@ -1226,6 +1234,8 @@ class TestWorkflows(
         )
         action = WorkflowAction.objects.create()
         action.assign_custom_fields.add(self.cf1)
+        action.assign_custom_fields_values = {self.cf1.pk: "new value"}
+        action.save()
         w = Workflow.objects.create(
             name="Workflow 1",
             order=0,
@@ -1249,6 +1259,9 @@ class TestWorkflows(
             {"document_type": self.dt.id},
             format="json",
         )
+
+        doc.refresh_from_db()
+        self.assertEqual(doc.custom_fields.get(field=self.cf1).value, "new value")
 
     def test_document_updated_workflow_merge_permissions(self):
         """
@@ -2148,9 +2161,8 @@ class TestWorkflows(
         EMAIL_ENABLED=True,
         PAPERLESS_URL="http://localhost:8000",
     )
-    @mock.patch("httpx.post")
     @mock.patch("django.core.mail.message.EmailMessage.send")
-    def test_workflow_email_include_file(self, mock_email_send, mock_post):
+    def test_workflow_email_include_file(self, mock_email_send):
         """
         GIVEN:
             - Document updated workflow with email action
@@ -2195,6 +2207,24 @@ class TestWorkflows(
         )
 
         run_workflows(WorkflowTrigger.WorkflowTriggerType.DOCUMENT_UPDATED, doc)
+
+        mock_email_send.assert_called_once()
+
+        mock_email_send.reset_mock()
+        # test with .eml file
+        test_file2 = shutil.copy(
+            self.SAMPLE_DIR / "eml_with_umlaut.eml",
+            self.dirs.scratch_dir / "eml_with_umlaut.eml",
+        )
+
+        doc2 = Document.objects.create(
+            title="sample eml",
+            checksum="123456",
+            filename=test_file2,
+            mime_type="message/rfc822",
+        )
+
+        run_workflows(WorkflowTrigger.WorkflowTriggerType.DOCUMENT_UPDATED, doc2)
 
         mock_email_send.assert_called_once()
 
@@ -2296,6 +2326,64 @@ class TestWorkflows(
         EMAIL_ENABLED=True,
         PAPERLESS_URL="http://localhost:8000",
     )
+    @mock.patch("httpx.post")
+    @mock.patch("django.core.mail.message.EmailMessage.send")
+    def test_workflow_email_consumption_started(self, mock_email_send, mock_post):
+        """
+        GIVEN:
+            - Workflow with email action and consumption trigger
+        WHEN:
+            - Document is consumed
+        THEN:
+            - Email is sent
+        """
+        mock_post.return_value = mock.Mock(
+            status_code=200,
+            json=mock.Mock(return_value={"status": "ok"}),
+        )
+        mock_email_send.return_value = 1
+
+        trigger = WorkflowTrigger.objects.create(
+            type=WorkflowTrigger.WorkflowTriggerType.CONSUMPTION,
+        )
+        email_action = WorkflowActionEmail.objects.create(
+            subject="Test Notification: {doc_title}",
+            body="Test message: {doc_url}",
+            to="user@example.com",
+            include_document=False,
+        )
+        action = WorkflowAction.objects.create(
+            type=WorkflowAction.WorkflowActionType.EMAIL,
+            email=email_action,
+        )
+        w = Workflow.objects.create(
+            name="Workflow 1",
+            order=0,
+        )
+        w.triggers.add(trigger)
+        w.actions.add(action)
+        w.save()
+
+        test_file = shutil.copy(
+            self.SAMPLE_DIR / "simple.pdf",
+            self.dirs.scratch_dir / "simple.pdf",
+        )
+
+        with mock.patch("documents.tasks.ProgressManager", DummyProgressManager):
+            with self.assertLogs("paperless.matching", level="INFO"):
+                tasks.consume_file(
+                    ConsumableDocument(
+                        source=DocumentSource.ConsumeFolder,
+                        original_file=test_file,
+                    ),
+                    None,
+                )
+
+        mock_email_send.assert_called_once()
+
+    @override_settings(
+        PAPERLESS_URL="http://localhost:8000",
+    )
     @mock.patch("documents.signals.handlers.send_webhook.delay")
     def test_workflow_webhook_action_body(self, mock_post):
         """
@@ -2349,11 +2437,10 @@ class TestWorkflows(
             data=f"Test message: http://localhost:8000/documents/{doc.id}/",
             headers={},
             files=None,
+            as_json=False,
         )
 
     @override_settings(
-        PAPERLESS_EMAIL_HOST="localhost",
-        EMAIL_ENABLED=True,
         PAPERLESS_URL="http://localhost:8000",
     )
     @mock.patch("documents.signals.handlers.send_webhook.delay")
@@ -2412,11 +2499,10 @@ class TestWorkflows(
             data=f"Test message: http://localhost:8000/documents/{doc.id}/",
             headers={},
             files={"file": ("simple.pdf", mock.ANY, "application/pdf")},
+            as_json=False,
         )
 
     @override_settings(
-        PAPERLESS_EMAIL_HOST="localhost",
-        EMAIL_ENABLED=True,
         PAPERLESS_URL="http://localhost:8000",
     )
     def test_workflow_webhook_action_fail(self):
@@ -2529,7 +2615,7 @@ class TestWorkflows(
 
             mock_post.assert_called_once_with(
                 "http://paperless-ngx.com",
-                data="Test message",
+                content="Test message",
                 headers={},
                 files=None,
             )
@@ -2562,3 +2648,96 @@ class TestWorkflows(
                     "Failed attempt sending webhook to http://paperless-ngx.com"
                 )
                 self.assertIn(expected_str, cm.output[0])
+
+    @mock.patch("documents.signals.handlers.send_webhook.delay")
+    def test_workflow_webhook_action_consumption(self, mock_post):
+        """
+        GIVEN:
+            - Workflow with webhook action and consumption trigger
+        WHEN:
+            - Document is consumed
+        THEN:
+            - Webhook is sent
+        """
+        mock_post.return_value = mock.Mock(
+            status_code=200,
+            json=mock.Mock(return_value={"status": "ok"}),
+        )
+
+        trigger = WorkflowTrigger.objects.create(
+            type=WorkflowTrigger.WorkflowTriggerType.CONSUMPTION,
+        )
+        webhook_action = WorkflowActionWebhook.objects.create(
+            use_params=False,
+            body="Test message: {doc_url}",
+            url="http://paperless-ngx.com",
+            include_document=False,
+        )
+        action = WorkflowAction.objects.create(
+            type=WorkflowAction.WorkflowActionType.WEBHOOK,
+            webhook=webhook_action,
+        )
+        w = Workflow.objects.create(
+            name="Workflow 1",
+            order=0,
+        )
+        w.triggers.add(trigger)
+        w.actions.add(action)
+        w.save()
+
+        test_file = shutil.copy(
+            self.SAMPLE_DIR / "simple.pdf",
+            self.dirs.scratch_dir / "simple.pdf",
+        )
+
+        with mock.patch("documents.tasks.ProgressManager", DummyProgressManager):
+            with self.assertLogs("paperless.matching", level="INFO"):
+                tasks.consume_file(
+                    ConsumableDocument(
+                        source=DocumentSource.ConsumeFolder,
+                        original_file=test_file,
+                    ),
+                    None,
+                )
+
+        mock_post.assert_called_once()
+
+
+class TestWebhookSend:
+    def test_send_webhook_data_or_json(
+        self,
+        httpx_mock: HTTPXMock,
+    ):
+        """
+        GIVEN:
+            - Nothing
+        WHEN:
+            - send_webhook is called with data or dict
+        THEN:
+            - data is sent as form-encoded and json, respectively
+        """
+        httpx_mock.add_response(
+            content=b"ok",
+        )
+
+        send_webhook(
+            url="http://paperless-ngx.com",
+            data="Test message",
+            headers={},
+            files=None,
+            as_json=False,
+        )
+        assert httpx_mock.get_request().headers.get("Content-Type") is None
+        httpx_mock.reset()
+
+        httpx_mock.add_response(
+            json={"status": "ok"},
+        )
+        send_webhook(
+            url="http://paperless-ngx.com",
+            data={"message": "Test message"},
+            headers={},
+            files=None,
+            as_json=True,
+        )
+        assert httpx_mock.get_request().headers["Content-Type"] == "application/json"

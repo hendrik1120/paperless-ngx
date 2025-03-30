@@ -1,8 +1,7 @@
-import { TestBed } from '@angular/core/testing'
-import { Subject } from 'rxjs'
-import { LoadingComponentWithPermissions } from './loading.component'
-import { ComponentWithPermissions } from '../with-permissions/with-permissions.component'
 import { Component } from '@angular/core'
+import { TestBed } from '@angular/core/testing'
+import { ComponentWithPermissions } from '../with-permissions/with-permissions.component'
+import { LoadingComponentWithPermissions } from './loading.component'
 
 class MockComponentWithPermissions extends ComponentWithPermissions {}
 
@@ -29,8 +28,8 @@ describe('LoadingComponentWithPermissions', () => {
     expect(component.loading).toBeTruthy()
   })
 
-  it('should have reveal set to false by default', () => {
-    expect(component.reveal).toBeFalsy()
+  it('should have show set to false by default', () => {
+    expect(component.show).toBeFalsy()
   })
 
   it('should call next and complete on unsubscribeNotifier with itself on destroy', () => {

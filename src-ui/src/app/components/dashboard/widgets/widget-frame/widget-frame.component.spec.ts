@@ -1,10 +1,10 @@
+import { DragDropModule } from '@angular/cdk/drag-drop'
 import { Component } from '@angular/core'
 import { ComponentFixture, TestBed } from '@angular/core/testing'
 import { By } from '@angular/platform-browser'
 import { NgbAlertModule } from '@ng-bootstrap/ng-bootstrap'
 import { PermissionsGuard } from 'src/app/guards/permissions.guard'
 import { WidgetFrameComponent } from './widget-frame.component'
-import { DragDropModule } from '@angular/cdk/drag-drop'
 
 @Component({
   template: `
@@ -28,9 +28,13 @@ describe('WidgetFrameComponent', () => {
 
   beforeEach(async () => {
     TestBed.configureTestingModule({
-      declarations: [WidgetFrameComponent, WidgetFrameComponent],
       providers: [PermissionsGuard],
-      imports: [NgbAlertModule, DragDropModule],
+      imports: [
+        NgbAlertModule,
+        DragDropModule,
+        WidgetFrameComponent,
+        WidgetFrameComponent,
+      ],
     }).compileComponents()
 
     fixture = TestBed.createComponent(WidgetFrameComponent)
@@ -53,9 +57,9 @@ describe('WidgetFrameComponent', () => {
     expect(fixture.debugElement.query(By.css('.spinner-border'))).not.toBeNull()
   })
 
-  it('should reveal', () => {
-    expect(component.reveal).toBeFalsy()
+  it('should show', () => {
+    expect(component.show).toBeFalsy()
     jest.advanceTimersByTime(100)
-    expect(component.reveal).toBeTruthy()
+    expect(component.show).toBeTruthy()
   })
 })

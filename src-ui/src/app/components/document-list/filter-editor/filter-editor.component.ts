@@ -1,17 +1,21 @@
 import {
+  AfterViewInit,
   Component,
+  ElementRef,
   EventEmitter,
   Input,
-  Output,
-  OnInit,
   OnDestroy,
+  OnInit,
+  Output,
   ViewChild,
-  ElementRef,
-  AfterViewInit,
 } from '@angular/core'
-import { Tag } from 'src/app/data/tag'
-import { Correspondent } from 'src/app/data/correspondent'
-import { DocumentType } from 'src/app/data/document-type'
+import { FormsModule, ReactiveFormsModule } from '@angular/forms'
+import {
+  NgbDropdownModule,
+  NgbTypeaheadModule,
+} from '@ng-bootstrap/ng-bootstrap'
+import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
+import { TourNgBootstrapModule } from 'ngx-ui-tour-ng-bootstrap'
 import { Observable, Subject, from } from 'rxjs'
 import {
   catchError,
@@ -22,85 +26,96 @@ import {
   switchMap,
   takeUntil,
 } from 'rxjs/operators'
-import { DocumentTypeService } from 'src/app/services/rest/document-type.service'
-import { TagService } from 'src/app/services/rest/tag.service'
-import { CorrespondentService } from 'src/app/services/rest/correspondent.service'
+import { CustomField } from 'src/app/data/custom-field'
+import {
+  CustomFieldQueryLogicalOperator,
+  CustomFieldQueryOperator,
+} from 'src/app/data/custom-field-query'
+import { Document } from 'src/app/data/document'
 import { FilterRule } from 'src/app/data/filter-rule'
-import { filterRulesDiffer } from 'src/app/utils/filter-rules'
 import {
   FILTER_ADDED_AFTER,
   FILTER_ADDED_BEFORE,
+  FILTER_ADDED_FROM,
+  FILTER_ADDED_TO,
   FILTER_ASN,
-  FILTER_HAS_CORRESPONDENT_ANY,
+  FILTER_ASN_GT,
+  FILTER_ASN_ISNULL,
+  FILTER_ASN_LT,
+  FILTER_CORRESPONDENT,
   FILTER_CREATED_AFTER,
   FILTER_CREATED_BEFORE,
-  FILTER_HAS_DOCUMENT_TYPE_ANY,
-  FILTER_FULLTEXT_MORELIKE,
-  FILTER_FULLTEXT_QUERY,
-  FILTER_HAS_ANY_TAG,
-  FILTER_HAS_TAGS_ALL,
-  FILTER_HAS_TAGS_ANY,
-  FILTER_DOES_NOT_HAVE_TAG,
-  FILTER_TITLE,
-  FILTER_TITLE_CONTENT,
-  FILTER_HAS_STORAGE_PATH_ANY,
-  FILTER_ASN_ISNULL,
-  FILTER_ASN_GT,
-  FILTER_ASN_LT,
+  FILTER_CREATED_FROM,
+  FILTER_CREATED_TO,
+  FILTER_CUSTOM_FIELDS_QUERY,
+  FILTER_CUSTOM_FIELDS_TEXT,
+  FILTER_DOCUMENT_TYPE,
   FILTER_DOES_NOT_HAVE_CORRESPONDENT,
   FILTER_DOES_NOT_HAVE_DOCUMENT_TYPE,
   FILTER_DOES_NOT_HAVE_STORAGE_PATH,
-  FILTER_DOCUMENT_TYPE,
-  FILTER_CORRESPONDENT,
-  FILTER_STORAGE_PATH,
+  FILTER_DOES_NOT_HAVE_TAG,
+  FILTER_FULLTEXT_MORELIKE,
+  FILTER_FULLTEXT_QUERY,
+  FILTER_HAS_ANY_TAG,
+  FILTER_HAS_CORRESPONDENT_ANY,
+  FILTER_HAS_CUSTOM_FIELDS_ALL,
+  FILTER_HAS_CUSTOM_FIELDS_ANY,
+  FILTER_HAS_DOCUMENT_TYPE_ANY,
+  FILTER_HAS_STORAGE_PATH_ANY,
+  FILTER_HAS_TAGS_ALL,
+  FILTER_HAS_TAGS_ANY,
+  FILTER_MIME_TYPE,
   FILTER_OWNER,
+  FILTER_OWNER_ANY,
   FILTER_OWNER_DOES_NOT_INCLUDE,
   FILTER_OWNER_ISNULL,
-  FILTER_OWNER_ANY,
-  FILTER_CUSTOM_FIELDS_TEXT,
   FILTER_SHARED_BY_USER,
-  FILTER_HAS_CUSTOM_FIELDS_ANY,
-  FILTER_HAS_CUSTOM_FIELDS_ALL,
-  FILTER_HAS_ANY_CUSTOM_FIELDS,
-  FILTER_CUSTOM_FIELDS_QUERY,
+  FILTER_STORAGE_PATH,
+  FILTER_TITLE,
+  FILTER_TITLE_CONTENT,
+  NEGATIVE_NULL_FILTER_VALUE,
 } from 'src/app/data/filter-rule-type'
 import {
+  PermissionAction,
+  PermissionType,
+  PermissionsService,
+} from 'src/app/services/permissions.service'
+import { CorrespondentService } from 'src/app/services/rest/correspondent.service'
+import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
+import { DocumentTypeService } from 'src/app/services/rest/document-type.service'
+import {
+  DocumentService,
+  SelectionData,
+  SelectionDataItem,
+} from 'src/app/services/rest/document.service'
+import { SearchService } from 'src/app/services/rest/search.service'
+import { StoragePathService } from 'src/app/services/rest/storage-path.service'
+import { TagService } from 'src/app/services/rest/tag.service'
+import {
+  CustomFieldQueryAtom,
+  CustomFieldQueryExpression,
+} from 'src/app/utils/custom-field-query-element'
+import { filterRulesDiffer } from 'src/app/utils/filter-rules'
+import {
+  CustomFieldQueriesModel,
+  CustomFieldsQueryDropdownComponent,
+} from '../../common/custom-fields-query-dropdown/custom-fields-query-dropdown.component'
+import {
+  DatesDropdownComponent,
+  RelativeDate,
+} from '../../common/dates-dropdown/dates-dropdown.component'
+import {
+  FilterableDropdownComponent,
   FilterableDropdownSelectionModel,
   Intersection,
   LogicalOperator,
 } from '../../common/filterable-dropdown/filterable-dropdown.component'
 import { ToggleableItemState } from '../../common/filterable-dropdown/toggleable-dropdown-button/toggleable-dropdown-button.component'
 import {
-  DocumentService,
-  SelectionData,
-  SelectionDataItem,
-} from 'src/app/services/rest/document.service'
-import { Document } from 'src/app/data/document'
-import { StoragePath } from 'src/app/data/storage-path'
-import { StoragePathService } from 'src/app/services/rest/storage-path.service'
-import { RelativeDate } from '../../common/dates-dropdown/dates-dropdown.component'
-import {
   OwnerFilterType,
+  PermissionsFilterDropdownComponent,
   PermissionsSelectionModel,
 } from '../../common/permissions-filter-dropdown/permissions-filter-dropdown.component'
-import {
-  PermissionAction,
-  PermissionType,
-  PermissionsService,
-} from 'src/app/services/permissions.service'
-import { ComponentWithPermissions } from '../../with-permissions/with-permissions.component'
-import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
-import { CustomField } from 'src/app/data/custom-field'
-import { SearchService } from 'src/app/services/rest/search.service'
-import {
-  CustomFieldQueryLogicalOperator,
-  CustomFieldQueryOperator,
-} from 'src/app/data/custom-field-query'
-import { CustomFieldQueriesModel } from '../../common/custom-fields-query-dropdown/custom-fields-query-dropdown.component'
-import {
-  CustomFieldQueryExpression,
-  CustomFieldQueryAtom,
-} from 'src/app/utils/custom-field-query-element'
 import { LoadingComponentWithPermissions } from '../../loading-component/loading.component'
 
 const TEXT_FILTER_TARGET_TITLE = 'title'
@@ -109,6 +124,7 @@ const TEXT_FILTER_TARGET_ASN = 'asn'
 const TEXT_FILTER_TARGET_FULLTEXT_QUERY = 'fulltext-query'
 const TEXT_FILTER_TARGET_FULLTEXT_MORELIKE = 'fulltext-morelike'
 const TEXT_FILTER_TARGET_CUSTOM_FIELDS = 'custom-fields'
+const TEXT_FILTER_TARGET_MIME_TYPE = 'mime-type'
 
 const TEXT_FILTER_MODIFIER_EQUALS = 'equals'
 const TEXT_FILTER_MODIFIER_NULL = 'is null'
@@ -116,24 +132,44 @@ const TEXT_FILTER_MODIFIER_NOTNULL = 'not null'
 const TEXT_FILTER_MODIFIER_GT = 'greater'
 const TEXT_FILTER_MODIFIER_LT = 'less'
 
-const RELATIVE_DATE_QUERY_REGEXP_CREATED = /created:\[([^\]]+)\]/g
-const RELATIVE_DATE_QUERY_REGEXP_ADDED = /added:\[([^\]]+)\]/g
+const RELATIVE_DATE_QUERY_REGEXP_CREATED = /created:[\["]([^\]]+)[\]"]/g
+const RELATIVE_DATE_QUERY_REGEXP_ADDED = /added:[\["]([^\]]+)[\]"]/g
 const RELATIVE_DATE_QUERYSTRINGS = [
   {
-    relativeDate: RelativeDate.LAST_7_DAYS,
+    relativeDate: RelativeDate.WITHIN_1_WEEK,
     dateQuery: '-1 week to now',
+    isRange: true,
   },
   {
-    relativeDate: RelativeDate.LAST_MONTH,
+    relativeDate: RelativeDate.WITHIN_1_MONTH,
     dateQuery: '-1 month to now',
+    isRange: true,
   },
   {
-    relativeDate: RelativeDate.LAST_3_MONTHS,
+    relativeDate: RelativeDate.WITHIN_3_MONTHS,
     dateQuery: '-3 month to now',
+    isRange: true,
   },
   {
-    relativeDate: RelativeDate.LAST_YEAR,
+    relativeDate: RelativeDate.WITHIN_1_YEAR,
     dateQuery: '-1 year to now',
+    isRange: true,
+  },
+  {
+    relativeDate: RelativeDate.THIS_YEAR,
+    dateQuery: 'this year',
+  },
+  {
+    relativeDate: RelativeDate.THIS_MONTH,
+    dateQuery: 'this month',
+  },
+  {
+    relativeDate: RelativeDate.TODAY,
+    dateQuery: 'today',
+  },
+  {
+    relativeDate: RelativeDate.YESTERDAY,
+    dateQuery: 'yesterday',
   },
 ]
 
@@ -148,6 +184,7 @@ const DEFAULT_TEXT_FILTER_TARGET_OPTIONS = [
     id: TEXT_FILTER_TARGET_CUSTOM_FIELDS,
     name: $localize`Custom fields`,
   },
+  { id: TEXT_FILTER_TARGET_MIME_TYPE, name: $localize`File type` },
   {
     id: TEXT_FILTER_TARGET_FULLTEXT_QUERY,
     name: $localize`Advanced search`,
@@ -186,6 +223,18 @@ const DEFAULT_TEXT_FILTER_MODIFIER_OPTIONS = [
   selector: 'pngx-filter-editor',
   templateUrl: './filter-editor.component.html',
   styleUrls: ['./filter-editor.component.scss'],
+  imports: [
+    FilterableDropdownComponent,
+    CustomFieldsQueryDropdownComponent,
+    DatesDropdownComponent,
+    PermissionsFilterDropdownComponent,
+    NgxBootstrapIconsModule,
+    NgbDropdownModule,
+    NgbTypeaheadModule,
+    FormsModule,
+    ReactiveFormsModule,
+    TourNgBootstrapModule,
+  ],
 })
 export class FilterEditorComponent
   extends LoadingComponentWithPermissions
@@ -199,7 +248,9 @@ export class FilterEditorComponent
         case FILTER_HAS_CORRESPONDENT_ANY:
           if (rule.value) {
             return $localize`Correspondent: ${
-              this.correspondents.find((c) => c.id == +rule.value)?.name
+              this.correspondentSelectionModel.items.find(
+                (c) => c.id == +rule.value
+              )?.name
             }`
           } else {
             return $localize`Without correspondent`
@@ -209,7 +260,9 @@ export class FilterEditorComponent
         case FILTER_HAS_DOCUMENT_TYPE_ANY:
           if (rule.value) {
             return $localize`Document type: ${
-              this.documentTypes.find((dt) => dt.id == +rule.value)?.name
+              this.documentTypeSelectionModel.items.find(
+                (dt) => dt.id == +rule.value
+              )?.name
             }`
           } else {
             return $localize`Without document type`
@@ -219,7 +272,9 @@ export class FilterEditorComponent
         case FILTER_HAS_STORAGE_PATH_ANY:
           if (rule.value) {
             return $localize`Storage path: ${
-              this.storagePaths.find((sp) => sp.id == +rule.value)?.name
+              this.storagePathSelectionModel.items.find(
+                (sp) => sp.id == +rule.value
+              )?.name
             }`
           } else {
             return $localize`Without storage path`
@@ -227,7 +282,7 @@ export class FilterEditorComponent
 
         case FILTER_HAS_TAGS_ALL:
           return $localize`Tag: ${
-            this.tags.find((t) => t.id == +rule.value)?.name
+            this.tagSelectionModel.items.find((t) => t.id == +rule.value)?.name
           }`
 
         case FILTER_HAS_ANY_TAG:
@@ -274,10 +329,6 @@ export class FilterEditorComponent
   @ViewChild('textFilterInput')
   textFilterInput: ElementRef
 
-  tags: Tag[] = []
-  correspondents: Correspondent[] = []
-  documentTypes: DocumentType[] = []
-  storagePaths: StoragePath[] = []
   customFields: CustomField[] = []
 
   tagDocumentCounts: SelectionDataItem[]
@@ -318,16 +369,16 @@ export class FilterEditorComponent
     )
   }
 
-  tagSelectionModel = new FilterableDropdownSelectionModel()
+  tagSelectionModel = new FilterableDropdownSelectionModel(true)
   correspondentSelectionModel = new FilterableDropdownSelectionModel()
   documentTypeSelectionModel = new FilterableDropdownSelectionModel()
   storagePathSelectionModel = new FilterableDropdownSelectionModel()
   customFieldQueriesModel = new CustomFieldQueriesModel()
 
-  dateCreatedBefore: string
-  dateCreatedAfter: string
-  dateAddedBefore: string
-  dateAddedAfter: string
+  dateCreatedTo: string
+  dateCreatedFrom: string
+  dateAddedTo: string
+  dateAddedFrom: string
   dateCreatedRelativeDate: RelativeDate
   dateAddedRelativeDate: RelativeDate
 
@@ -360,10 +411,10 @@ export class FilterEditorComponent
     this.customFieldQueriesModel.clear(false)
     this._textFilter = null
     this._moreLikeId = null
-    this.dateAddedBefore = null
-    this.dateAddedAfter = null
-    this.dateCreatedBefore = null
-    this.dateCreatedAfter = null
+    this.dateAddedTo = null
+    this.dateAddedFrom = null
+    this.dateCreatedTo = null
+    this.dateCreatedFrom = null
     this.dateCreatedRelativeDate = null
     this.dateAddedRelativeDate = null
     this.textFilterModifier = TEXT_FILTER_MODIFIER_EQUALS
@@ -386,6 +437,10 @@ export class FilterEditorComponent
         case FILTER_CUSTOM_FIELDS_TEXT:
           this._textFilter = rule.value
           this.textFilterTarget = TEXT_FILTER_TARGET_CUSTOM_FIELDS
+          break
+        case FILTER_MIME_TYPE:
+          this.textFilterTarget = TEXT_FILTER_TARGET_MIME_TYPE
+          this._textFilter = rule.value
           break
         case FILTER_FULLTEXT_QUERY:
           let allQueryArgs = rule.value.split(',')
@@ -433,16 +488,40 @@ export class FilterEditorComponent
           })
           break
         case FILTER_CREATED_AFTER:
-          this.dateCreatedAfter = rule.value
+          // Old rules require adjusting date by a day
+          const createdAfter = new Date(rule.value)
+          createdAfter.setDate(createdAfter.getDate() + 1)
+          this.dateCreatedFrom = createdAfter.toISOString().split('T')[0]
           break
         case FILTER_CREATED_BEFORE:
-          this.dateCreatedBefore = rule.value
+          // Old rules require adjusting date by a day
+          const createdBefore = new Date(rule.value)
+          createdBefore.setDate(createdBefore.getDate() - 1)
+          this.dateCreatedTo = createdBefore.toISOString().split('T')[0]
           break
         case FILTER_ADDED_AFTER:
-          this.dateAddedAfter = rule.value
+          // Old rules require adjusting date by a day
+          const addedAfter = new Date(rule.value)
+          addedAfter.setDate(addedAfter.getDate() + 1)
+          this.dateAddedFrom = addedAfter.toISOString().split('T')[0]
           break
         case FILTER_ADDED_BEFORE:
-          this.dateAddedBefore = rule.value
+          // Old rules require adjusting date by a day
+          const addedBefore = new Date(rule.value)
+          addedBefore.setDate(addedBefore.getDate() - 1)
+          this.dateAddedTo = addedBefore.toISOString().split('T')[0]
+          break
+        case FILTER_CREATED_FROM:
+          this.dateCreatedFrom = rule.value
+          break
+        case FILTER_CREATED_TO:
+          this.dateCreatedTo = rule.value
+          break
+        case FILTER_ADDED_FROM:
+          this.dateAddedFrom = rule.value
+          break
+        case FILTER_ADDED_TO:
+          this.dateAddedTo = rule.value
           break
         case FILTER_HAS_TAGS_ALL:
           this.tagSelectionModel.logicalOperator = LogicalOperator.And
@@ -471,6 +550,19 @@ export class FilterEditorComponent
           )
           break
         case FILTER_CORRESPONDENT:
+          this.correspondentSelectionModel.intersection =
+            rule.value == NEGATIVE_NULL_FILTER_VALUE.toString()
+              ? Intersection.Exclude
+              : Intersection.Include
+          this.correspondentSelectionModel.set(
+            rule.value ? +rule.value : null,
+            this.correspondentSelectionModel.intersection ==
+              Intersection.Include
+              ? ToggleableItemState.Selected
+              : ToggleableItemState.Excluded,
+            false
+          )
+          break
         case FILTER_HAS_CORRESPONDENT_ANY:
           this.correspondentSelectionModel.logicalOperator = LogicalOperator.Or
           this.correspondentSelectionModel.intersection = Intersection.Include
@@ -489,6 +581,18 @@ export class FilterEditorComponent
           )
           break
         case FILTER_DOCUMENT_TYPE:
+          this.documentTypeSelectionModel.intersection =
+            rule.value == NEGATIVE_NULL_FILTER_VALUE.toString()
+              ? Intersection.Exclude
+              : Intersection.Include
+          this.documentTypeSelectionModel.set(
+            rule.value ? +rule.value : null,
+            this.documentTypeSelectionModel.intersection == Intersection.Include
+              ? ToggleableItemState.Selected
+              : ToggleableItemState.Excluded,
+            false
+          )
+          break
         case FILTER_HAS_DOCUMENT_TYPE_ANY:
           this.documentTypeSelectionModel.logicalOperator = LogicalOperator.Or
           this.documentTypeSelectionModel.intersection = Intersection.Include
@@ -507,6 +611,18 @@ export class FilterEditorComponent
           )
           break
         case FILTER_STORAGE_PATH:
+          this.storagePathSelectionModel.intersection =
+            rule.value == NEGATIVE_NULL_FILTER_VALUE.toString()
+              ? Intersection.Exclude
+              : Intersection.Include
+          this.storagePathSelectionModel.set(
+            rule.value ? +rule.value : null,
+            this.storagePathSelectionModel.intersection == Intersection.Include
+              ? ToggleableItemState.Selected
+              : ToggleableItemState.Excluded,
+            false
+          )
+          break
         case FILTER_HAS_STORAGE_PATH_ANY:
           this.storagePathSelectionModel.logicalOperator = LogicalOperator.Or
           this.storagePathSelectionModel.intersection = Intersection.Include
@@ -678,6 +794,15 @@ export class FilterEditorComponent
     }
     if (
       this._textFilter &&
+      this.textFilterTarget == TEXT_FILTER_TARGET_MIME_TYPE
+    ) {
+      filterRules.push({
+        rule_type: FILTER_MIME_TYPE,
+        value: this._textFilter,
+      })
+    }
+    if (
+      this._textFilter &&
       this.textFilterTarget == TEXT_FILTER_TARGET_FULLTEXT_QUERY
     ) {
       filterRules.push({
@@ -720,9 +845,21 @@ export class FilterEditorComponent
           })
         })
     }
-    if (this.correspondentSelectionModel.isNoneSelected()) {
+    if (
+      this.correspondentSelectionModel.isNoneSelected() &&
+      this.correspondentSelectionModel.intersection == Intersection.Include
+    ) {
       filterRules.push({ rule_type: FILTER_CORRESPONDENT, value: null })
     } else {
+      if (
+        this.correspondentSelectionModel.isNoneSelected() &&
+        this.correspondentSelectionModel.intersection == Intersection.Exclude
+      ) {
+        filterRules.push({
+          rule_type: FILTER_CORRESPONDENT,
+          value: NEGATIVE_NULL_FILTER_VALUE.toString(),
+        })
+      }
       this.correspondentSelectionModel
         .getSelectedItems()
         .forEach((correspondent) => {
@@ -733,6 +870,7 @@ export class FilterEditorComponent
         })
       this.correspondentSelectionModel
         .getExcludedItems()
+        .filter((correspondent) => correspondent.id > 0)
         .forEach((correspondent) => {
           filterRules.push({
             rule_type: FILTER_DOES_NOT_HAVE_CORRESPONDENT,
@@ -740,9 +878,21 @@ export class FilterEditorComponent
           })
         })
     }
-    if (this.documentTypeSelectionModel.isNoneSelected()) {
+    if (
+      this.documentTypeSelectionModel.isNoneSelected() &&
+      this.documentTypeSelectionModel.intersection === Intersection.Include
+    ) {
       filterRules.push({ rule_type: FILTER_DOCUMENT_TYPE, value: null })
     } else {
+      if (
+        this.documentTypeSelectionModel.isNoneSelected() &&
+        this.documentTypeSelectionModel.intersection == Intersection.Exclude
+      ) {
+        filterRules.push({
+          rule_type: FILTER_DOCUMENT_TYPE,
+          value: NEGATIVE_NULL_FILTER_VALUE.toString(),
+        })
+      }
       this.documentTypeSelectionModel
         .getSelectedItems()
         .forEach((documentType) => {
@@ -753,6 +903,7 @@ export class FilterEditorComponent
         })
       this.documentTypeSelectionModel
         .getExcludedItems()
+        .filter((documentType) => documentType.id > 0)
         .forEach((documentType) => {
           filterRules.push({
             rule_type: FILTER_DOES_NOT_HAVE_DOCUMENT_TYPE,
@@ -760,9 +911,21 @@ export class FilterEditorComponent
           })
         })
     }
-    if (this.storagePathSelectionModel.isNoneSelected()) {
+    if (
+      this.storagePathSelectionModel.isNoneSelected() &&
+      this.storagePathSelectionModel.intersection == Intersection.Include
+    ) {
       filterRules.push({ rule_type: FILTER_STORAGE_PATH, value: null })
     } else {
+      if (
+        this.storagePathSelectionModel.isNoneSelected() &&
+        this.storagePathSelectionModel.intersection == Intersection.Exclude
+      ) {
+        filterRules.push({
+          rule_type: FILTER_STORAGE_PATH,
+          value: NEGATIVE_NULL_FILTER_VALUE.toString(),
+        })
+      }
       this.storagePathSelectionModel
         .getSelectedItems()
         .forEach((storagePath) => {
@@ -773,6 +936,7 @@ export class FilterEditorComponent
         })
       this.storagePathSelectionModel
         .getExcludedItems()
+        .filter((storagePath) => storagePath.id > 0)
         .forEach((storagePath) => {
           filterRules.push({
             rule_type: FILTER_DOES_NOT_HAVE_STORAGE_PATH,
@@ -783,34 +947,34 @@ export class FilterEditorComponent
     let queries = this.customFieldQueriesModel.queries.map((query) =>
       query.serialize()
     )
-    if (queries.length > 0) {
+    if (queries.length > 0 && this.customFieldQueriesModel.isValid()) {
       filterRules.push({
         rule_type: FILTER_CUSTOM_FIELDS_QUERY,
         value: JSON.stringify(queries[0]),
       })
     }
-    if (this.dateCreatedBefore) {
+    if (this.dateCreatedTo) {
       filterRules.push({
-        rule_type: FILTER_CREATED_BEFORE,
-        value: this.dateCreatedBefore,
+        rule_type: FILTER_CREATED_TO,
+        value: this.dateCreatedTo,
       })
     }
-    if (this.dateCreatedAfter) {
+    if (this.dateCreatedFrom) {
       filterRules.push({
-        rule_type: FILTER_CREATED_AFTER,
-        value: this.dateCreatedAfter,
+        rule_type: FILTER_CREATED_FROM,
+        value: this.dateCreatedFrom,
       })
     }
-    if (this.dateAddedBefore) {
+    if (this.dateAddedTo) {
       filterRules.push({
-        rule_type: FILTER_ADDED_BEFORE,
-        value: this.dateAddedBefore,
+        rule_type: FILTER_ADDED_TO,
+        value: this.dateAddedTo,
       })
     }
-    if (this.dateAddedAfter) {
+    if (this.dateAddedFrom) {
       filterRules.push({
-        rule_type: FILTER_ADDED_AFTER,
-        value: this.dateAddedAfter,
+        rule_type: FILTER_ADDED_FROM,
+        value: this.dateAddedFrom,
       })
     }
     if (
@@ -838,12 +1002,11 @@ export class FilterEditorComponent
 
       let existingRuleArgs = existingRule?.value.split(',')
       if (this.dateCreatedRelativeDate !== null) {
+        const rd = RELATIVE_DATE_QUERYSTRINGS.find(
+          (qS) => qS.relativeDate == this.dateCreatedRelativeDate
+        )
         queryArgs.push(
-          `created:[${
-            RELATIVE_DATE_QUERYSTRINGS.find(
-              (qS) => qS.relativeDate == this.dateCreatedRelativeDate
-            ).dateQuery
-          }]`
+          `created:${rd.isRange ? `[${rd.dateQuery}]` : `"${rd.dateQuery}"`}`
         )
         if (existingRule) {
           queryArgs = existingRuleArgs
@@ -852,12 +1015,11 @@ export class FilterEditorComponent
         }
       }
       if (this.dateAddedRelativeDate !== null) {
+        const rd = RELATIVE_DATE_QUERYSTRINGS.find(
+          (qS) => qS.relativeDate == this.dateAddedRelativeDate
+        )
         queryArgs.push(
-          `added:[${
-            RELATIVE_DATE_QUERYSTRINGS.find(
-              (qS) => qS.relativeDate == this.dateAddedRelativeDate
-            ).dateQuery
-          }]`
+          `added:${rd.isRange ? `[${rd.dateQuery}]` : `"${rd.dateQuery}"`}`
         )
         if (existingRule) {
           queryArgs = existingRuleArgs
@@ -961,7 +1123,7 @@ export class FilterEditorComponent
     this.loadingCount++
     if (this.loadingCount == this.loadingCountTotal) {
       this.loading = false
-      this.reveal = true
+      this.show = true
     }
   }
 
@@ -975,7 +1137,7 @@ export class FilterEditorComponent
     ) {
       this.loadingCountTotal++
       this.tagService.listAll().subscribe((result) => {
-        this.tags = result.results
+        this.tagSelectionModel.items = result.results
         this.maybeCompleteLoading()
       })
     }
@@ -987,7 +1149,7 @@ export class FilterEditorComponent
     ) {
       this.loadingCountTotal++
       this.correspondentService.listAll().subscribe((result) => {
-        this.correspondents = result.results
+        this.correspondentSelectionModel.items = result.results
         this.maybeCompleteLoading()
       })
     }
@@ -999,7 +1161,7 @@ export class FilterEditorComponent
     ) {
       this.loadingCountTotal++
       this.documentTypeService.listAll().subscribe((result) => {
-        this.documentTypes = result.results
+        this.documentTypeSelectionModel.items = result.results
         this.maybeCompleteLoading()
       })
     }
@@ -1011,7 +1173,7 @@ export class FilterEditorComponent
     ) {
       this.loadingCountTotal++
       this.storagePathService.listAll().subscribe((result) => {
-        this.storagePaths = result.results
+        this.storagePathSelectionModel.items = result.results
         this.maybeCompleteLoading()
       })
     }

@@ -1,19 +1,28 @@
 import {
+  ChangeDetectorRef,
   Component,
   ElementRef,
+  OnDestroy,
   OnInit,
   ViewChild,
-  ChangeDetectorRef,
-  OnDestroy,
 } from '@angular/core'
-import { takeUntil } from 'rxjs'
+import { FormsModule, ReactiveFormsModule } from '@angular/forms'
+import { NgbNavModule } from '@ng-bootstrap/ng-bootstrap'
+import { filter, takeUntil, timer } from 'rxjs'
 import { LogService } from 'src/app/services/rest/log.service'
+import { PageHeaderComponent } from '../../common/page-header/page-header.component'
 import { LoadingComponentWithPermissions } from '../../loading-component/loading.component'
 
 @Component({
   selector: 'pngx-logs',
   templateUrl: './logs.component.html',
   styleUrls: ['./logs.component.scss'],
+  imports: [
+    PageHeaderComponent,
+    NgbNavModule,
+    FormsModule,
+    ReactiveFormsModule,
+  ],
 })
 export class LogsComponent
   extends LoadingComponentWithPermissions
@@ -32,7 +41,7 @@ export class LogsComponent
 
   public activeLog: string
 
-  public autoRefreshInterval: any
+  public autoRefreshEnabled: boolean = true
 
   @ViewChild('logContainer') logContainer: ElementRef
 
@@ -47,13 +56,19 @@ export class LogsComponent
           this.activeLog = this.logFiles[0]
           this.reloadLogs()
         }
-        this.toggleAutoRefresh()
+        timer(5000, 5000)
+          .pipe(
+            filter(() => this.autoRefreshEnabled),
+            takeUntil(this.unsubscribeNotifier)
+          )
+          .subscribe(() => {
+            this.reloadLogs()
+          })
       })
   }
 
   ngOnDestroy(): void {
     super.ngOnDestroy()
-    clearInterval(this.autoRefreshInterval)
   }
 
   reloadLogs() {
@@ -95,16 +110,5 @@ export class LogsComponent
       left: 0,
       behavior: 'auto',
     })
-  }
-
-  toggleAutoRefresh(): void {
-    if (this.autoRefreshInterval) {
-      clearInterval(this.autoRefreshInterval)
-      this.autoRefreshInterval = null
-    } else {
-      this.autoRefreshInterval = setInterval(() => {
-        this.reloadLogs()
-      }, 5000)
-    }
   }
 }
